@@ -11,7 +11,6 @@ import GateInput from "./GateInput";
 import SerpInsights from "./SerpInsights";
 import KeywordGrid from "./KeywordGrid";
 import CompetitorGrid from "./CompetitorGrid";
-import TopicGrid from "./TopicGrid";
 
 export default function StepCard({ step, data, onRetry, onGateSubmit }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -175,11 +174,7 @@ export default function StepCard({ step, data, onRetry, onGateSubmit }) {
             </div>
           )}
 
-          {step.id === 2 && data.text ? (
-            <CompetitorGrid text={data.text} />
-          ) : step.id === 3 && data.text ? (
-            <TopicGrid text={data.text} />
-          ) : step.id === 4 && data.text ? (
+          {step.id === 4 && data.text ? (
             <KeywordGrid text={data.text} />
           ) : (
             data.text && <MarkdownContent text={data.text} />
