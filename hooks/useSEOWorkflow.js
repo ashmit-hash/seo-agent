@@ -476,19 +476,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     }
   }, [callSEO, patchStep, runStep4]);
 
-  // ── Step 2 — Seasonal Competitor Analysis ───────────────────
+  // ── Step 2 — Top Brand Multi-Post Analysis ──────────────────
   const runStep2 = useCallback(async () => {
     stepInputsRef.current[2] = {};
     patchStep(2, { status: "loading" });
     try {
-      // ── Calculate same month, last year ─────────────────────
       const now           = new Date();
       const lastYear      = now.getFullYear() - 1;
       const lastYearDate  = new Date(lastYear, now.getMonth(), 1);
       const lastYearMonth = lastYearDate.toLocaleString("en-US", { month: "long" });
-      const lastYearStr   = `${lastYearMonth} ${lastYear}`; // e.g. "April 2025"
+      const lastYearStr   = `${lastYearMonth} ${lastYear}`;
 
-      // ── Extract niche from Step 1 audit ─────────────────────
       const auditText  = stepDataRef.current[1]?.text ?? "";
       const scrapeCtx  = stepInputsRef.current[1]?.scrapeContext ?? "";
       const niche      = extractNicheFromAudit(auditText, scrapeCtx);
@@ -496,24 +494,29 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       stepInputsRef.current[2] = { lastYearStr, niche, siteUrl };
 
-      // ── 3 parallel SERP searches targeting last year same month
-      const [res1, res2, res3] = await Promise.allSettled([
-        fetchSERP(`${niche} brand blog "${lastYearMonth} ${lastYear}"`),
-        fetchSERP(`${niche} competitor blog ${lastYearMonth} ${lastYear} india`),
-        fetchSERP(`${niche} ${lastYearMonth} ${lastYear} festival occasion blog`),
+      // ── 4 searches: find top brands + their recent blog posts ──
+      const [res1, res2, res3, res4] = await Promise.allSettled([
+        // Find the biggest SEO-active brands in this niche
+        fetchSERP(`top ${niche} brand blog india site:*.com`),
+        // Find recent blog posts from leading brands
+        fetchSERP(`best ${niche} brand blog posts india 2025 2026`),
+        // Find what top brands wrote around last year same month
+        fetchSERP(`${niche} brand blog ${lastYearMonth} ${lastYear} india`),
+        // Find festival/seasonal content from top brands
+        fetchSERP(`${niche} brand blog festival guide india latest`),
       ]);
 
-      // ── Merge & deduplicate organic results ─────────────────
+      // ── Merge & deduplicate ─────────────────────────────────
       const seen    = new Set();
       const organic = [];
-      for (const res of [res1, res2, res3]) {
+      for (const res of [res1, res2, res3, res4]) {
         if (res.status !== "fulfilled") continue;
         for (const item of res.value?.organic ?? []) {
           if (!seen.has(item.link)) {
             seen.add(item.link);
             organic.push(item);
           }
-          if (organic.length >= 15) break;
+          if (organic.length >= 20) break;
         }
       }
 
@@ -521,7 +524,8 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const nicheContext = [
         `Website: ${siteUrl}`,
         `Detected Niche: ${niche}`,
-        `Target Analysis Period: ${lastYearStr}`,
+        `Analysis Period: ${lastYearStr} (same month last year)`,
+        `Current Month: ${now.toLocaleString("en-US", { month: "long" })} ${now.getFullYear()}`,
         scrapeCtx ? `Brand Context:\n${scrapeCtx}` : "",
       ].filter(Boolean).join("\n");
 
@@ -531,7 +535,6 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         true
       );
 
-      // Save seasonal intelligence for Step 3
       stepInputsRef.current[2].seasonalIntelligence = d2.text;
 
       patchStep(2, {
