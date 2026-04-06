@@ -378,14 +378,16 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
   // ── Step 5 ───────────────────────────────────────────────────
   const runStep5 = useCallback(async (topicChoice, keywordAnswer) => {
+    // Always resolve — topicChoice may still be a number if called from retry
+    const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[3]?.text);
     patchStep(4, { gate: null, status: "done" });
     const kwNote = !["proceed", "yes"].includes(keywordAnswer.toLowerCase())
       ? `\n\nNote: Keyword modifications requested: "${keywordAnswer}". Please adjust accordingly.`
       : "";
-    stepInputsRef.current[5] = { topic: topicChoice, kwNote };
+    stepInputsRef.current[5] = { topic: resolvedTopic, kwNote };
     patchStep(5, { status: "loading" });
     try {
-      const d5 = await callSEO(PROMPT_STEP5(topicChoice, kwNote));
+      const d5 = await callSEO(PROMPT_STEP5(resolvedTopic, kwNote));
       patchStep(5, {
         status: "waiting", text: d5.text, canRetry: false,
         gate: {
@@ -393,7 +395,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           prompt     : "Approve this outline to generate the full blog post?",
           hint       : "Type 'approve' to continue, or describe any changes.",
           placeholder: "approve, or describe changes…",
-          onSubmit   : (ans) => runStep6(topicChoice, ans),
+          onSubmit   : (ans) => runStep6(resolvedTopic, ans),
         },
       });
     } catch (e) {
@@ -423,7 +425,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           prompt     : "Proceed with these keywords, or modify them?",
           hint       : "Type 'proceed' to continue, or describe modifications.",
           placeholder: "proceed, or describe changes…",
-          onSubmit   : (ans) => runStep5(topicChoice, ans),
+          onSubmit   : (ans) => runStep5(resolvedTopic, ans),
         },
       });
     } catch (e) {
