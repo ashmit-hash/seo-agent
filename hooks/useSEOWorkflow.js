@@ -494,16 +494,21 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       stepInputsRef.current[2] = { lastYearStr, niche, siteUrl };
 
-      // ── 4 searches: find top brands + their recent blog posts ──
+      // ── 4 targeted searches: top D2C brand content ────────────
+      // Priority brands for jewellery: Giva, BlueStone, Candere, Mia by Tanishq, Kushal's
+      const topBrands = niche.includes("jewel") || niche.includes("gold") || niche.includes("silver") || niche.includes("diamond")
+        ? "Giva OR BlueStone OR Candere OR Mia Tanishq"
+        : `top ${niche} D2C brand india`;
+
       const [res1, res2, res3, res4] = await Promise.allSettled([
-        // Find the biggest SEO-active brands in this niche
-        fetchSERP(`top ${niche} brand blog india site:*.com`),
-        // Find recent blog posts from leading brands
-        fetchSERP(`best ${niche} brand blog posts india 2025 2026`),
-        // Find what top brands wrote around last year same month
-        fetchSERP(`${niche} brand blog ${lastYearMonth} ${lastYear} india`),
-        // Find festival/seasonal content from top brands
-        fetchSERP(`${niche} brand blog festival guide india latest`),
+        // Latest blog posts from top D2C brands
+        fetchSERP(`${topBrands} blog 2026 latest posts`),
+        // Their festival/seasonal content
+        fetchSERP(`${topBrands} blog ${lastYearMonth} ${lastYear}`),
+        // Their content strategy patterns
+        fetchSERP(`${topBrands} ${niche} blog trending topics india`),
+        // Recent high-performing posts
+        fetchSERP(`giva blog site:giva.co OR bluestone.com/blog OR candere.com/blog`),
       ]);
 
       // ── Merge & deduplicate ─────────────────────────────────
