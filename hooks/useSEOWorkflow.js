@@ -8,7 +8,7 @@ import { QualityAssurance } from "@/lib/qualityAssurance";
 import {
   STEPS, SYSTEM_PROMPT,
   PROMPT_STEP1, PROMPT_STEP2, PROMPT_STEP3,
-  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP7, PROMPT_STEP8,
+  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP7,
 } from "@/lib/constants";
 
 // ─── Step Reducer ─────────────────────────────────────────────────
@@ -333,48 +333,14 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   return "D2C brand";
 }
 
-  // ── Step 8 — Business Report ────────────────────────────────
-  const runStep8 = useCallback(async () => {
-    stepInputsRef.current[8] = {};
-    patchStep(8, { status: "loading" });
-    try {
-      // Gather context from previous steps
-      const topic       = stepInputsRef.current[6]?.topic
-                        ?? stepInputsRef.current[5]?.topic
-                        ?? stepInputsRef.current[4]?.topic
-                        ?? "";
-      const siteUrl     = siteUrlRef.current;
-
-      // Extract keywords from Step 4 output
-      const step4Text   = stepDataRef.current[4]?.text ?? "";
-      const kwMatches   = [...step4Text.matchAll(/Target Keyword:\s*(.+)/gi)];
-      const keywords    = kwMatches
-        .map(m => m[1].replace(/\*\*/g, "").trim())
-        .filter(k => k.length > 3)
-        .slice(0, 6)
-        .join(", ");
-
-      // Use first 300 chars of blog as summary context
-      const blogSummary = (stepDataRef.current[6]?.text ?? "").slice(0, 300);
-
-      const d8 = await callSEO(
-        PROMPT_STEP8(topic, keywords || "keywords from keyword research", siteUrl, blogSummary),
-        3000
-      );
-      patchStep(8, { status: "done", text: d8.text, canRetry: false });
-      setPhase("done");
-      clearSession();
-    } catch (e) {
-      patchStep(8, { status: "error", error: e.message, canRetry: true });
-    }
-  }, [callSEO, patchStep]);
-
   const runStep7 = useCallback(async () => {
     stepInputsRef.current[7] = {};
     patchStep(7, { status: "loading" });
     try {
       const d7 = await callSEO(PROMPT_STEP7());
       patchStep(7, { status: "done", text: d7.text, canRetry: false });
+      setPhase("done");
+      clearSession();
     } catch (e) {
       patchStep(7, { status: "error", error: e.message, canRetry: true });
     }
@@ -384,38 +350,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   const runStep6 = useCallback(async (topicChoice, outlineAnswer) => {
     patchStep(5, { gate: null, status: "done" });
     const outNote = !["approve", "yes"].includes(outlineAnswer.toLowerCase())
-      ? `\n\nNote: Blueprint changes requested: "${outlineAnswer}". Please incorporate.`
+      ? `\n\nNote: Outline changes requested: "${outlineAnswer}". Please incorporate.`
       : "";
     const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[3]?.text);
-
-    // ── Extract content type and blueprint from Step 5 output ──
-    const step5Text = stepDataRef.current[5]?.text ?? "";
-
-    const contentTypeMatch = step5Text.match(/\*\*Selected Type:\*\*\s*(.+)/i)
-      ?? step5Text.match(/Selected Type:\s*(.+)/i)
-      ?? step5Text.match(/Content Type:\s*(.+)/i);
-    const contentType = contentTypeMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
-
-    // Extract the full blueprint structure section
-    const blueprintMatch = step5Text.match(/Recommended Structure:([\s\S]*?)(?=\*\*Tone:|\*\*Writing Style:|\*\*Opening Line|$)/i);
-    const blueprintStructure = blueprintMatch?.[1]?.trim() ?? "";
-
-    const targetReaderMatch = step5Text.match(/\*\*Target Reader:\*\*\s*(.+)/i)
-      ?? step5Text.match(/Target Reader:\s*(.+)/i);
-    const targetReader = targetReaderMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
-
-    const corePromiseMatch = step5Text.match(/\*\*Core Promise:\*\*\s*(.+)/i)
-      ?? step5Text.match(/Core Promise:\s*(.+)/i);
-    const corePromise = corePromiseMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
-
-    stepInputsRef.current[6] = { topic: resolvedTopic, outNote, contentType, blueprintStructure, targetReader, corePromise };
+    stepInputsRef.current[6] = { topic: resolvedTopic, outNote };
     patchStep(6, { status: "loading" });
     try {
       const ragRes    = await fetchSERP(resolvedTopic);
       const ragContext = ragRes ? JSON.stringify(ragRes.organic?.slice(0, 4) ?? []) : "";
       stepInputsRef.current[6].ragContext = ragContext;
 
-      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise), 6000);
+      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext), 6000);
       patchStep(6, { status: "done", text: d6.text, canRetry: false });
 
       try {
@@ -640,18 +585,15 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   const runStep2Ref = useRef(runStep2);
   const runStep3Ref = useRef(runStep3);
   const runStep7Ref = useRef(runStep7);
-  const runStep8Ref = useRef(runStep8);
   useEffect(() => { runStep2Ref.current = runStep2; }, [runStep2]);
   useEffect(() => { runStep3Ref.current = runStep3; }, [runStep3]);
   useEffect(() => { runStep7Ref.current = runStep7; }, [runStep7]);
-  useEffect(() => { runStep8Ref.current = runStep8; }, [runStep8]);
 
   useEffect(() => {
     if (phase !== "running") return;
     if (stepData[1]?.status === "done" && !stepData[2]) runStep2Ref.current();
     if (stepData[2]?.status === "done" && !stepData[3]) runStep3Ref.current();
     if (stepData[6]?.status === "done" && !stepData[7]) runStep7Ref.current();
-    if (stepData[7]?.status === "done" && !stepData[8]) runStep8Ref.current();
   }, [phase, stepData]);
 
   // ── Retry ────────────────────────────────────────────────────
@@ -666,9 +608,8 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       3: () => callSEO(PROMPT_STEP3(stepInputsRef.current[2]?.seasonalIntelligence ?? "", new Date().toLocaleString("en-US", { month: "long" })), 4096, true),
       4: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       5: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? ""), 6000, true),
+      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext),           6000, true),
       7: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
-      8: () => callSEO(PROMPT_STEP8(stepInputsRef.current[4]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
 
     try {
