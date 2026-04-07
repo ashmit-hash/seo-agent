@@ -384,17 +384,38 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   const runStep6 = useCallback(async (topicChoice, outlineAnswer) => {
     patchStep(5, { gate: null, status: "done" });
     const outNote = !["approve", "yes"].includes(outlineAnswer.toLowerCase())
-      ? `\n\nNote: Outline changes requested: "${outlineAnswer}". Please incorporate.`
+      ? `\n\nNote: Blueprint changes requested: "${outlineAnswer}". Please incorporate.`
       : "";
     const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[3]?.text);
-    stepInputsRef.current[6] = { topic: resolvedTopic, outNote };
+
+    // ── Extract content type and blueprint from Step 5 output ──
+    const step5Text = stepDataRef.current[5]?.text ?? "";
+
+    const contentTypeMatch = step5Text.match(/\*\*Selected Type:\*\*\s*(.+)/i)
+      ?? step5Text.match(/Selected Type:\s*(.+)/i)
+      ?? step5Text.match(/Content Type:\s*(.+)/i);
+    const contentType = contentTypeMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
+
+    // Extract the full blueprint structure section
+    const blueprintMatch = step5Text.match(/Recommended Structure:([\s\S]*?)(?=\*\*Tone:|\*\*Writing Style:|\*\*Opening Line|$)/i);
+    const blueprintStructure = blueprintMatch?.[1]?.trim() ?? "";
+
+    const targetReaderMatch = step5Text.match(/\*\*Target Reader:\*\*\s*(.+)/i)
+      ?? step5Text.match(/Target Reader:\s*(.+)/i);
+    const targetReader = targetReaderMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
+
+    const corePromiseMatch = step5Text.match(/\*\*Core Promise:\*\*\s*(.+)/i)
+      ?? step5Text.match(/Core Promise:\s*(.+)/i);
+    const corePromise = corePromiseMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
+
+    stepInputsRef.current[6] = { topic: resolvedTopic, outNote, contentType, blueprintStructure, targetReader, corePromise };
     patchStep(6, { status: "loading" });
     try {
       const ragRes    = await fetchSERP(resolvedTopic);
       const ragContext = ragRes ? JSON.stringify(ragRes.organic?.slice(0, 4) ?? []) : "";
       stepInputsRef.current[6].ragContext = ragContext;
 
-      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext), 6000);
+      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise), 6000);
       patchStep(6, { status: "done", text: d6.text, canRetry: false });
 
       try {
@@ -645,7 +666,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       3: () => callSEO(PROMPT_STEP3(stepInputsRef.current[2]?.seasonalIntelligence ?? "", new Date().toLocaleString("en-US", { month: "long" })), 4096, true),
       4: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       5: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext),           6000, true),
+      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? ""), 6000, true),
       7: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
       8: () => callSEO(PROMPT_STEP8(stepInputsRef.current[4]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
