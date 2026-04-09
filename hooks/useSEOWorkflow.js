@@ -313,23 +313,41 @@ Content: ${mainContent.slice(0, 3000)}…`;
 // ── Niche detector — reads Step 1 scrape & audit text ────────
 function extractNicheFromAudit(auditText, scrapeContext) {
   const combined = ((scrapeContext || "") + " " + (auditText || "")).toLowerCase();
+
   const nichePatterns = [
-    { pattern: /jewel|gold|silver|diamond|pendant|necklace|ring|bangle|earring/i, label: "jewellery" },
-    { pattern: /fashion|apparel|clothing|dress|kurta|saree|ethnic/i,             label: "fashion apparel" },
-    { pattern: /beauty|skincare|cosmetic|makeup|serum|moisturizer/i,             label: "beauty skincare" },
-    { pattern: /home decor|furniture|cushion|candle|lamp/i,                      label: "home decor" },
-    { pattern: /food|snack|chocolate|mithai|sweet|organic/i,                     label: "food snacks" },
-    { pattern: /kids|children|baby|toy|school/i,                                 label: "kids baby products" },
-    { pattern: /footwear|shoe|sandal|sneaker|heel/i,                             label: "footwear" },
-    { pattern: /watch|timepiece/i,                                               label: "watches" },
-    { pattern: /bag|handbag|wallet|purse|tote/i,                                 label: "bags accessories" },
-    { pattern: /wellness|supplement|vitamin|protein|ayurved/i,                   label: "health wellness" },
+    // Jewellery — must be explicit, not just "gold" or "silver" in passing
+    { pattern: /jewel(?:ler)?y|jewellery brand|gold jewel|silver jewel|diamond jewel|pendant|necklace|bangles|earring/i, label: "jewellery" },
+    { pattern: /fashion|apparel|clothing|kurta|saree|ethnic wear|lehenga/i,       label: "fashion apparel" },
+    { pattern: /skincare|cosmetic|makeup|serum|moisturizer|face wash|beauty brand/i, label: "beauty skincare" },
+    { pattern: /home decor|scented candle|diffuser|cushion cover|wall art|decor brand/i, label: "home decor" },
+    { pattern: /tiffin|meal delivery|home food|dabba|lunch box service/i,          label: "tiffin food delivery" },
+    { pattern: /food|snack|chocolate|mithai|health food|organic food/i,            label: "food snacks" },
+    { pattern: /kids|children|baby|toy|school supply/i,                            label: "kids baby products" },
+    { pattern: /footwear|shoe brand|sandal|sneaker/i,                              label: "footwear" },
+    { pattern: /watch brand|timepiece/i,                                           label: "watches" },
+    { pattern: /handbag|wallet|purse|tote|leather bag/i,                           label: "bags accessories" },
+    { pattern: /wellness|supplement|vitamin|protein|ayurved/i,                     label: "health wellness" },
+    { pattern: /lifestyle|gifting|gift brand|curated gift|artisan|handcraft/i,     label: "lifestyle gifting" },
+    { pattern: /stationery|notebook|pen|planner|journal/i,                         label: "stationery" },
+    { pattern: /saas|software|app|platform|tool|dashboard/i,                       label: "SaaS software" },
+    { pattern: /furniture|sofa|chair|mattress|bed/i,                               label: "furniture" },
+    { pattern: /plant|garden|nursery|seeds/i,                                      label: "plants gardening" },
+    { pattern: /pet|dog|cat|pet food|pet care/i,                                   label: "pet care" },
   ];
+
   for (const { pattern, label } of nichePatterns) {
     if (pattern.test(combined)) return label;
   }
-  const titleMatch = (scrapeContext || "").match(/Title:\s*(.+)/i);
-  if (titleMatch) return titleMatch[1].slice(0, 60);
+
+  // Fallback: extract brand description from scrape Title/H1/Desc
+  const titleMatch  = (scrapeContext || "").match(/Title:\s*(.+)/i);
+  const h1Match     = (scrapeContext || "").match(/H1:\s*(.+)/i);
+  const descMatch   = (scrapeContext || "").match(/Desc:\s*(.+)/i);
+
+  // Use the most descriptive available field
+  const fallback = descMatch?.[1] || h1Match?.[1] || titleMatch?.[1] || "";
+  if (fallback.length > 5) return fallback.slice(0, 80).trim();
+
   return "D2C brand";
 }
 
@@ -454,7 +472,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const ragContext = ragRes ? JSON.stringify(ragRes.organic?.slice(0, 4) ?? []) : "";
       stepInputsRef.current[6].ragContext = ragContext;
 
-      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise), 6000);
+      // ── Build website context from Step 1 audit ───────────────
+      const auditText   = stepDataRef.current[1]?.text ?? "";
+      const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
+      // First 600 chars of audit = brand/category summary
+      const websiteContext = [
+        scrapeCtx ? scrapeCtx.slice(0, 400) : "",
+        auditText ? auditText.slice(0, 200) : "",
+      ].filter(Boolean).join("\n").trim();
+      stepInputsRef.current[6].websiteContext = websiteContext;
+
+      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 6000);
 
       try {
         const quality = QualityAssurance.validateStep(6, d6.text);
@@ -602,21 +630,16 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       stepInputsRef.current[2] = { lastYearStr, niche, siteUrl };
 
-      // ── 4 targeted searches: top D2C brand content ────────────
-      // Priority brands for jewellery: Giva, BlueStone, Candere, Mia by Tanishq, Kushal's
-      const topBrands = niche.includes("jewel") || niche.includes("gold") || niche.includes("silver") || niche.includes("diamond")
-        ? "Giva OR BlueStone OR Candere OR Mia Tanishq"
-        : `top ${niche} D2C brand india`;
-
+      // ── 4 targeted searches — niche-specific, no hardcoded brands ─
       const [res1, res2, res3, res4] = await Promise.allSettled([
-        // Latest blog posts from top D2C brands
-        fetchSERP(`${topBrands} blog 2026 latest posts`),
-        // Their festival/seasonal content
-        fetchSERP(`${topBrands} blog ${lastYearMonth} ${lastYear}`),
-        // Their content strategy patterns
-        fetchSERP(`${topBrands} ${niche} blog trending topics india`),
-        // Recent high-performing posts
-        fetchSERP(`giva blog site:giva.co OR bluestone.com/blog OR candere.com/blog`),
+        // Find top D2C brands actively blogging in this exact niche
+        fetchSERP(`top ${niche} brand blog india 2025 2026`),
+        // What top brands in this niche posted last year same month
+        fetchSERP(`best ${niche} brand blog ${lastYearMonth} ${lastYear} india`),
+        // Trending content topics for this niche
+        fetchSERP(`${niche} blog trending topics india ${lastYear}`),
+        // High-performing content in this niche category
+        fetchSERP(`${niche} D2C brand content strategy india blog`),
       ]);
 
       // ── Merge & deduplicate ─────────────────────────────────
@@ -719,7 +742,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       3: () => callSEO(PROMPT_STEP3(stepInputsRef.current[2]?.seasonalIntelligence ?? "", new Date().toLocaleString("en-US", { month: "long" })), 4096, true),
       4: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       5: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? ""), 6000, true),
+      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? ""), 6000, true),
       7: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
       8: () => callSEO(PROMPT_STEP8(stepInputsRef.current[4]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
