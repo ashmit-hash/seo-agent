@@ -8,7 +8,7 @@ import { QualityAssurance } from "@/lib/qualityAssurance";
 import {
   STEPS, SYSTEM_PROMPT,
   PROMPT_STEP1, PROMPT_STEP2, PROMPT_STEP3,
-  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP6_REVISE, PROMPT_STEP7, PROMPT_STEP8,
+  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP6_FORMAT, PROMPT_STEP6_REVISE, PROMPT_STEP7, PROMPT_STEP8,
 } from "@/lib/constants";
 
 // ─── Step Reducer ─────────────────────────────────────────────────
@@ -482,10 +482,22 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       ].filter(Boolean).join("\n").trim();
       stepInputsRef.current[6].websiteContext = websiteContext;
 
-      const d6 = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 6000);
+      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 6000);
+
+      // ── Auto-format into paragraphs before showing to user ───
+      let finalBlogText = d6raw.text;
+      try {
+        const d6fmt = await callSEO(PROMPT_STEP6_FORMAT(d6raw.text), 4000);
+        if (d6fmt?.text && d6fmt.text.length > 200) {
+          finalBlogText = d6fmt.text;
+        }
+      } catch (fmtErr) {
+        console.log("[Format] Paragraph formatting skipped:", fmtErr.message);
+        // fallback: use original blog text
+      }
 
       try {
-        const quality = QualityAssurance.validateStep(6, d6.text);
+        const quality = QualityAssurance.validateStep(6, finalBlogText);
         patchStep(6, { quality });
         if (quality.qualityScore < 70)
           console.warn(`[Quality] Score ${quality.qualityScore}% — below 70% threshold`);
@@ -496,7 +508,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // Show revision gate — user can approve or give feedback
       patchStep(6, {
         status  : "waiting",
-        text    : d6.text,
+        text    : finalBlogText,
         canRetry: false,
         gate    : {
           type       : "text",
