@@ -415,9 +415,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ),
         8000
       );
+
+      // ── Re-run formatter after revision ──────────────────────
+      let revisedText = d6r.text;
+      try {
+        const d6rfmt = await callSEO(PROMPT_STEP6_FORMAT(d6r.text), 8000);
+        if (d6rfmt?.text && d6rfmt.text.length > 200) revisedText = d6rfmt.text;
+      } catch (e) { /* fallback to unformatted */ }
+
       patchStep(6, {
         status  : "waiting",
-        text    : d6r.text,
+        text    : revisedText,
         canRetry: false,
         gate    : {
           type       : "text",
