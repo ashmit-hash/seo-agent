@@ -413,7 +413,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           existingBlog,
           feedback
         ),
-        6000
+        8000
       );
       patchStep(6, {
         status  : "waiting",
@@ -482,12 +482,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       ].filter(Boolean).join("\n").trim();
       stepInputsRef.current[6].websiteContext = websiteContext;
 
-      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 6000);
+      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 8000);
 
       // ── Auto-format into paragraphs before showing to user ───
       let finalBlogText = d6raw.text;
       try {
-        const d6fmt = await callSEO(PROMPT_STEP6_FORMAT(d6raw.text), 4000);
+        const d6fmt = await callSEO(PROMPT_STEP6_FORMAT(d6raw.text), 8000);
         if (d6fmt?.text && d6fmt.text.length > 200) {
           finalBlogText = d6fmt.text;
         }
@@ -754,7 +754,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       3: () => callSEO(PROMPT_STEP3(stepInputsRef.current[2]?.seasonalIntelligence ?? "", new Date().toLocaleString("en-US", { month: "long" })), 4096, true),
       4: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       5: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? ""), 6000, true),
+      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? ""), 8000, true),
       7: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
       8: () => callSEO(PROMPT_STEP8(stepInputsRef.current[4]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
