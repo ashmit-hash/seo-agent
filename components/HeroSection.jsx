@@ -22,20 +22,52 @@ const FEATURES = [
   "SEO Meta Tags",
 ];
 
+const GEMINI_ICON = (
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+    <path d="M12 24c6.627 0 12-5.373 12-12S18.627 0 12 0 0 5.373 0 12s5.373 12 12 12zm0-4.5c-.454-3.64-3.36-6.546-7-7 3.64-.454 6.546-3.36 7-7 .454 3.64 3.36 6.546 7 7-3.64.454-6.546 3.36-7 7z"/>
+  </svg>
+);
+
 const PROVIDERS = [
   {
     id: "gemini",
-    name: "Gemini",
+    name: "Gemini 2.5",
     sub: "Google",
-    badge: "3-flash",
-    color: "#1A73E8", // Google Blue
+    badge: "Flash",
+    color: "#1A73E8",
     bgColor: "rgba(26, 115, 232, 0.04)",
     borderColor: "rgba(26, 115, 232, 0.12)",
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-        <path d="M12 24c6.627 0 12-5.373 12-12S18.627 0 12 0 0 5.373 0 12s5.373 12 12 12zm0-4.5c-.454-3.64-3.36-6.546-7-7 3.64-.454 6.546-3.36 7-7 .454 3.64 3.36 6.546 7 7-3.64.454-6.546 3.36-7 7z"/>
-      </svg>
-    ),
+    icon: GEMINI_ICON,
+  },
+  {
+    id: "gemini-2.0-flash",
+    name: "Gemini 2.0",
+    sub: "Google",
+    badge: "Flash",
+    color: "#1A73E8",
+    bgColor: "rgba(26, 115, 232, 0.04)",
+    borderColor: "rgba(26, 115, 232, 0.12)",
+    icon: GEMINI_ICON,
+  },
+  {
+    id: "gemini-1.5-pro",
+    name: "Gemini 1.5",
+    sub: "Google",
+    badge: "Pro",
+    color: "#137333",
+    bgColor: "rgba(19, 115, 51, 0.04)",
+    borderColor: "rgba(19, 115, 51, 0.12)",
+    icon: GEMINI_ICON,
+  },
+  {
+    id: "gemini-1.5-flash",
+    name: "Gemini 1.5",
+    sub: "Google",
+    badge: "Flash",
+    color: "#1A73E8",
+    bgColor: "rgba(26, 115, 232, 0.04)",
+    borderColor: "rgba(26, 115, 232, 0.12)",
+    icon: GEMINI_ICON,
   },
 ];
 

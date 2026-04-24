@@ -142,14 +142,14 @@ async function callOpenAI(messages, systemPrompt, maxTokens) {
   }
 }
 
-// ─── Gemini 3 Flash Preview ──────────────────────────────────────
+// ─── Gemini (multi-model) ────────────────────────────────────────
 // NOTE: googleSearch tool removed — requires Gemini paid tier.
 // The model itself still performs research based on its training.
-async function callGemini(messages, systemPrompt, maxTokens) {
+async function callGemini(messages, systemPrompt, maxTokens, model = "gemini-2.5-flash-preview-04-17") {
   const apiKey = KeyRotator.getKey("gemini");
   if (!apiKey) throw new Error("QUOTA_EXHAUSTED:gemini");
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const timeout = maxTokens >= 5000 ? TIMEOUT_LONG : TIMEOUT_DEFAULT;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -257,10 +257,13 @@ async function callOpenRouter(messages, systemPrompt, maxTokens, modelOverride =
 }
 
 const CALLER_MAP = {
-  openai: callOpenAI,
-  gemini: callGemini,
-  anthropic: callAnthropic,
-  openrouter: callOpenRouter,
+  openai:              callOpenAI,
+  gemini:              callGemini,
+  "gemini-2.0-flash":  (m, s, t) => callGemini(m, s, t, "gemini-2.0-flash"),
+  "gemini-1.5-pro":    (m, s, t) => callGemini(m, s, t, "gemini-1.5-pro"),
+  "gemini-1.5-flash":  (m, s, t) => callGemini(m, s, t, "gemini-1.5-flash"),
+  anthropic:           callAnthropic,
+  openrouter:          callOpenRouter,
 };
 
 // ─── Retry with backoff ──────────────────────────────────────────
