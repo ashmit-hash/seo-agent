@@ -318,15 +318,15 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     // Jewellery — must be explicit, not just "gold" or "silver" in passing
     { pattern: /jewel(?:ler)?y|jewellery brand|gold jewel|silver jewel|diamond jewel|pendant|necklace|bangles|earring/i, label: "jewellery" },
     { pattern: /fashion|apparel|clothing|kurta|saree|ethnic wear|lehenga/i,       label: "fashion apparel" },
-    { pattern: /skincare|cosmetic|makeup|serum|moisturizer|face wash|beauty brand/i, label: "beauty skincare" },
+    { pattern: /skincare|cosmetic|makeup|serum|moisturizer|face wash|beauty|sunscreen|spf|toner|cleanser|lip balm/i, label: "beauty skincare" },
     { pattern: /home decor|scented candle|diffuser|cushion cover|wall art|decor brand/i, label: "home decor" },
     { pattern: /tiffin|meal delivery|home food|dabba|lunch box service/i,          label: "tiffin food delivery" },
     { pattern: /food|snack|chocolate|mithai|health food|organic food/i,            label: "food snacks" },
-    { pattern: /kids|children|baby|toy|school supply/i,                            label: "kids baby products" },
+    { pattern: /kids|children|baby|toy|school supply|toddler|infant|nursery|board game|puzzle/i, label: "kids baby products" },
     { pattern: /footwear|shoe brand|sandal|sneaker/i,                              label: "footwear" },
     { pattern: /watch brand|timepiece/i,                                           label: "watches" },
     { pattern: /handbag|wallet|purse|tote|leather bag/i,                           label: "bags accessories" },
-    { pattern: /wellness|supplement|vitamin|protein|ayurved/i,                     label: "health wellness" },
+    { pattern: /wellness|supplement|vitamin|protein|ayurved|healthcare|medicine|pharmacy|fitness|nutrition|herbal/i, label: "health wellness" },
     { pattern: /lifestyle|gifting|gift brand|curated gift|artisan|handcraft/i,     label: "lifestyle gifting" },
     { pattern: /stationery|notebook|pen|planner|journal/i,                         label: "stationery" },
     { pattern: /saas|software|app|platform|tool|dashboard/i,                       label: "SaaS software" },
@@ -483,8 +483,9 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // ── Build website context from Step 1 audit ───────────────
       const auditText   = stepDataRef.current[1]?.text ?? "";
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
+      const siteUrl     = siteUrlRef.current ?? "";
 
-      // Extract price range explicitly from scrape + audit text
+      // ── Extract price range from scraped data (PRICE LOCK) ────
       const priceMatches = (scrapeCtx + " " + auditText).match(/₹\s*[\d,]+(?:\s*[-–to]+\s*₹?\s*[\d,]+)?/g) || [];
       const numericPrices = priceMatches
         .map(p => parseInt(p.replace(/[₹,\s]/g, "").match(/\d+/)?.[0] || "0"))
@@ -495,12 +496,43 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ? `PRICE RANGE OF THIS BRAND: ₹${minPrice} – ₹${maxPrice} (MAX ₹${maxPrice}). DO NOT use any price examples above ₹${maxPrice} in the blog.`
         : "";
 
+      // ── Scrape product catalog from store ────────────────────
+      let productContext = "";
+      try {
+        const baseUrl = siteUrl.replace(/\/+$/, "");
+        const productPaths = ["/collections/all", "/shop", "/products", "/collections"];
+        for (const path of productPaths) {
+          const prodRes = await fetch("/api/scrape", {
+            method : "POST",
+            headers: { "Content-Type": "application/json" },
+            body   : JSON.stringify({ url: baseUrl + path }),
+          }).then(r => r.json()).catch(() => null);
+
+          if (prodRes && !prodRes.error && prodRes.mainText && prodRes.mainText.length > 100) {
+            productContext = "REAL PRODUCTS ON THIS WEBSITE (from " + baseUrl + path + "):\n" + prodRes.mainText.slice(0, 1500);
+            break;
+          }
+        }
+        // Fallback: extract nav categories from homepage scrape
+        if (!productContext && scrapeCtx) {
+          const h2s = (scrapeCtx.match(/H2s: (.+)/) || [])[1] ?? "";
+          const h3s = (scrapeCtx.match(/H3s: (.+)/) || [])[1] ?? "";
+          if (h2s || h3s) {
+            productContext = "PRODUCT CATEGORIES FROM WEBSITE:\n" + h2s + "\n" + h3s;
+          }
+        }
+      } catch (prodErr) {
+        console.log("[Products] Scrape skipped:", prodErr.message);
+      }
+
       const websiteContext = [
         priceRangeLine,
-        scrapeCtx ? scrapeCtx.slice(0, 600) : "",
-        auditText ? auditText.slice(0, 400) : "",
+        scrapeCtx ? scrapeCtx.slice(0, 400) : "",
+        auditText ? auditText.slice(0, 200) : "",
+        productContext ? productContext.slice(0, 1000) : "",
       ].filter(Boolean).join("\n").trim();
       stepInputsRef.current[6].websiteContext = websiteContext;
+      stepInputsRef.current[6].productContext = productContext;
 
       const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 8000);
 
