@@ -483,10 +483,22 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // ── Build website context from Step 1 audit ───────────────
       const auditText   = stepDataRef.current[1]?.text ?? "";
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
-      // First 600 chars of audit = brand/category summary
+
+      // Extract price range explicitly from scrape + audit text
+      const priceMatches = (scrapeCtx + " " + auditText).match(/₹\s*[\d,]+(?:\s*[-–to]+\s*₹?\s*[\d,]+)?/g) || [];
+      const numericPrices = priceMatches
+        .map(p => parseInt(p.replace(/[₹,\s]/g, "").match(/\d+/)?.[0] || "0"))
+        .filter(n => n > 0);
+      const maxPrice = numericPrices.length ? Math.max(...numericPrices) : null;
+      const minPrice = numericPrices.length ? Math.min(...numericPrices) : null;
+      const priceRangeLine = maxPrice
+        ? `PRICE RANGE OF THIS BRAND: ₹${minPrice} – ₹${maxPrice} (MAX ₹${maxPrice}). DO NOT use any price examples above ₹${maxPrice} in the blog.`
+        : "";
+
       const websiteContext = [
-        scrapeCtx ? scrapeCtx.slice(0, 400) : "",
-        auditText ? auditText.slice(0, 200) : "",
+        priceRangeLine,
+        scrapeCtx ? scrapeCtx.slice(0, 600) : "",
+        auditText ? auditText.slice(0, 400) : "",
       ].filter(Boolean).join("\n").trim();
       stepInputsRef.current[6].websiteContext = websiteContext;
 
