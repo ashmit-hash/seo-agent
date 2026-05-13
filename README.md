@@ -1,105 +1,161 @@
-***
-
-# SEO Blog Agent
+# SEO Agent
 
 <div align="center">
 
-**An autonomous, AI-powered SEO strategist and blog writing agent.**  
-Drop in any website URL — the agent researches, strategizes, and delivers a publication-ready, fully optimized blog post. No paid SERP APIs. No manual research. No fluff.
+**An autonomous, AI-powered SEO strategist and blog writing agent.**
+Drop in any website URL — the agent scrapes your site, researches competitors, builds a keyword strategy, writes a publication-ready blog post, and delivers a full SEO + GEO optimization package. No paid SERP APIs. No manual research. No fluff.
 
-[🚀 Quick Start](#installation--setup) · [📖 How It Works](#how-to-use) · [🗺️ Roadmap](#roadmap) · [🐛 Issues](https://github.com/Abhijeetsingh0022/SEO-Agent/issues)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-seo--agent--app-blue?style=for-the-badge)](https://seo-agent-app-kappa.vercel.app)
+[![Next.js](https://img.shields.io/badge/Next.js-16.1.7-black?style=for-the-badge&logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react)](https://react.dev/)
+[![Gemini](https://img.shields.io/badge/Gemini-2.5%20Flash-4285F4?style=for-the-badge&logo=google)](https://ai.google.dev/)
+
+[🚀 Quick Start](#-installation--setup) · [🗺️ How It Works](#-8-step-workflow) · [⚙️ Configuration](#-environment-variables) · [🐛 Issues](https://github.com/Abhijeetsingh0022/SEO-Agent/issues)
 
 </div>
 
-***
+---
 
-## 📊 Key Metrics
+## 📊 At a Glance
 
 | Metric | Value |
 |--------|-------|
-| Blog post length | 1,800–2,500 words per run |
-| Workflow steps | 7 gated stages |
-| AI models supported | 2 (Claude & GPT-4o) |
-| SEO deliverables per post | 4 (Title, Description, Slug, Tags) |
-| SERP data cost | $0 (custom DuckDuckGo scraper) |
-| Human-in-the-loop checkpoints | 3 (topic, outline, final review) |
+| Workflow steps | **8 gated stages** |
+| Blog post length | **800–1,100 words** (tight, no filler) |
+| AI models supported | **4 Gemini models** (switchable from UI) |
+| SERP data cost | **$0** (custom DuckDuckGo scraper) |
+| Human-in-the-loop gates | **2** (topic selection + blog approval) |
+| Two-pass blog generation | **Write → Auto-format → Approve** |
+| Price accuracy enforcement | **✅ Price Lock system** |
+| Product catalog integration | **✅ Real products from your store** |
+| Session persistence | **24-hour auto-resume** |
+| Deployment | **Vercel (production-ready)** |
 
-***
+---
 
-## ✨ Features
+## ✨ What Makes This Different
 
-### 🤖 Dual-Model AI Engine
-Choose the model that fits your workflow without changing any code. Toggle between:
-- **Anthropic Claude** (`claude-opus-4-5`) — leverages the native `web_search` tool for deep, grounded research
-- **OpenAI GPT-4o** (`gpt-4o-search-preview`) — integrated web search with broad reasoning capability
+### 🔒 Price Lock System
+Most AI blog writers invent made-up price ranges. This agent extracts the **actual ₹ price range** from your live website scrape and enforces it as a hard rule throughout the blog. A brand selling products under ₹800 will never get a blog suggesting ₹15,000 options.
 
-Both models are implemented via **native REST API `fetch` calls** — no bloated SDK wrappers.
+### 🛍️ Real Product Integration
+The agent scrapes your product catalog (`/collections/all`, `/shop`, `/products`) and instructs the AI to **mention your actual products by name** inside the blog — not generic placeholders.
 
-### 🔎 Agentic Web Search — Grounded in Reality
-Unlike prompt-only agents that hallucinate outdated facts, this agent actively browses the web at runtime to:
-- Audit your target website's content, tone, and niche
-- Identify and analyze real competitor pages
-- Validate keyword relevance against live search results
+### 🔒 Niche Lock
+A pattern-matching niche detector reads your scraped homepage data and audit output to identify your exact industry (fashion, food, SaaS, jewellery, home decor, kids products, etc.) before competitor research begins — preventing wrong-industry suggestions.
 
-### 📊 Free Real-Time SERP Analytics
-A custom-built DuckDuckGo HTML scraper powered by `cheerio` replaces paid SERP tools entirely. It pulls:
-- Live search rankings for target keywords
-- Competitor page snippets and metadata
-- Related search queries for semantic keyword expansion
+### ✍️ Two-Pass Blog Generation
+1. **Pass 1** — PROMPT_STEP6 writes the raw blog
+2. **Pass 2** — PROMPT_STEP6_FORMAT automatically reformats it into proper flowing paragraphs (no poem-style one-sentence-per-line output)
+3. **Approval gate** — you review and approve or request revisions before moving forward
 
-Zero API keys. Zero monthly fees. 100% operational.
+### 📅 GEO + March 2026 Algorithm Alignment
+Every prompt is anchored to the current date and calibrated to the **March 2026 Core Update**, the **December 2025 E-E-A-T expansion**, and the **February 2026 Discover Core Update**. AI Overviews optimization is built into the SEO layer.
 
-### 🚦 7-Step Gated Workflow
+---
+
+## 🗺️ 8-Step Workflow
 
 | Step | Stage | What Happens | Output |
 |------|-------|-------------|--------|
-| 1 | Website Analysis | AI audits your site's niche, tone, audience, and content gaps | Strategic site profile |
-| 2 | Competitor Research | Browses top-ranking competitor pages live | Competitive intelligence matrix |
-| 3 | Topic Generation | Proposes 10 data-backed blog topics aligned to your audience | Curated topic list |
-| 4 | Keyword Research | Maps primary/secondary keywords with search intent | Keyword + intent table |
-| 5 | Blog Outline | Builds a structured H2/H3 content blueprint | Editable outline |
-| 6 | Full Blog Post | Writes a 1,800–2,500 word Markdown article | Publication-ready post |
-| 7 | SEO Output | Packages all on-page SEO metadata | Meta title, description, slug, tags |
+| **1** | Brand Audit | Scrapes your homepage + audits niche, tone, audience, content gaps, GEO readiness. Extracts price range. | Strategic site profile + price range |
+| **2** | Competitor Intel | Detects your niche, runs 4 targeted SERP searches, identifies top competitor, analyses their latest 5-6 blog posts | Competitive content matrix |
+| **3** | Topic Architecture | Generates 10 seasonally-timed blog topics ranked by urgency and commercial relevance | Curated topic list with buyer intent |
+| **4** | Keyword Research | Maps 12 high-intent keywords with difficulty scores, AI Overview eligibility, and funnel stage | Full keyword + intent table |
+| **5** | Content Blueprint | Detects correct content type (Buying Guide / Educational / Gift Guide / etc.) and builds full section structure | Blog blueprint with tone and opening line |
+| **6** | Blog Post | Writes 800–1,100 word blog → auto-formats → shows approval gate. Revision loop available. | Publication-ready blog post |
+| **7** | SEO + GEO Layer | Packages meta title, description, URL slug, schema markup, image alt text, internal linking plan, GEO citation score | Full on-page SEO + GEO package |
+| **8** | Business Report | Plain-English report explaining the blog's value to the business owner — no jargon | 10-section owner-friendly report |
 
-### 🎛️ Human-in-the-Loop Control Gates
-The agent pauses at three critical decision points before proceeding, letting you:
-- Swap or customize the selected blog topic
-- Edit the outline structure before writing begins
-- Review and approve the final post before SEO packaging
+---
 
-You get the speed of AI with the judgment of a human editor.
+## 🤖 AI Models
 
-### 🎨 Premium SaaS UI
-No utility-class frameworks — every pixel is hand-crafted in **Vanilla CSS**:
-- Light-themed, distraction-free writing environment
-- Fluid step-transition animations
-- Dynamic competitor data matrix with visual hierarchy
-- **Plus Jakarta Sans** for headings, **Inter** for body text
-- **Lucide icons** throughout for a consistent, modern icon language
+All models are powered by **Google's Generative Language API** with **dual API key rotation** (round-robin between `GEMINI_API_KEY` and `GEMINI_API_KEY_2`) for higher rate limits.
 
-***
+| Model | UI Label | Best For |
+|-------|----------|----------|
+| `gemini-2.5-flash-preview-04-17` | **Gemini 2.5 Flash** ⭐ Default | Best quality, reasoning, long outputs |
+| `gemini-2.0-flash` | **Gemini 2.0 Flash** | Fast, cost-efficient |
+| `gemini-1.5-pro` | **Gemini 1.5 Pro** | Long context, complex analysis |
+| `gemini-1.5-flash` | **Gemini 1.5 Flash** | Fastest, lightweight tasks |
+
+Switch models from the dropdown in the top-left header — no code changes needed.
+
+---
 
 ## 🛠️ Technical Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Framework | Next.js 15 (App Router) | Full-stack React with API routes |
-| Frontend | React 18 + Vanilla CSS | UI rendering, no Tailwind dependency |
+| Layer | Technology | Notes |
+|-------|-----------|-------|
+| Framework | **Next.js 16.1.7** (App Router, Turbopack) | Full-stack React with API routes |
+| Frontend | **React 19** + Vanilla CSS | No Tailwind — hand-crafted styles |
+| State | `useReducer` + shadow refs pattern | Stable callbacks, no stale closures |
 | Icons | `lucide-react` | Consistent icon system |
-| Web Scraping | `cheerio` | DuckDuckGo HTML parsing for SERP data |
-| AI — Claude | Anthropic REST API | `claude-opus-4-5` with `web_search` |
-| AI — OpenAI | OpenAI REST API | `gpt-4o-search-preview` with search |
-| Fonts | Plus Jakarta Sans, Inter | Google Fonts via Next.js font optimization |
-| Environment | `.env.local` | Secure API key management |
+| Web Scraping | `cheerio` | DuckDuckGo HTML parsing for SERP + homepage scrape |
+| AI | Google Generative Language REST API | `fetch`-based, no SDK bloat |
+| Charts | `recharts` | Analytics and progress visualization |
+| PDF Export | `jspdf` | Export blog + SEO package as PDF |
+| Session | `localStorage` | 24-hour session with auto-resume |
+| Deployment | **Vercel** | Production-ready, zero config |
 
-***
+---
 
-## ⚙️ Installation & Setup
+## 📁 Project Structure
+
+```
+seo-agent/
+├── app/
+│   ├── api/
+│   │   ├── scrape/route.js        # Homepage + product catalog scraper (cheerio)
+│   │   ├── serp/route.js          # DuckDuckGo SERP scraper (free, no API key)
+│   │   └── seo/route.js           # Main AI route — Gemini API + key rotation
+│   ├── globals.css                # All styles (vanilla CSS, no Tailwind)
+│   ├── layout.js                  # Root layout + fonts
+│   └── page.jsx                   # Entry point
+├── components/
+│   ├── Header.jsx                 # Model selector dropdown + site pill
+│   ├── HeroSection.jsx            # URL input + brand context fields
+│   ├── StepCard.jsx               # Per-step output card with gate UI
+│   ├── ExportActions.jsx          # PDF / copy export buttons
+│   ├── PrivacyNotice.jsx          # Privacy notice component
+│   └── ...
+├── hooks/
+│   └── useSEOWorkflow.js          # Core state machine — all 8 steps + gates
+├── lib/
+│   ├── constants.js               # All AI prompts (PROMPT_STEP1–8, FORMAT, REVISE)
+│   └── qualityAssurance.js        # Blog quality validator
+├── .env.local                     # API keys (gitignored)
+├── next.config.js
+└── package.json
+```
+
+---
+
+## ⚙️ Environment Variables
+
+Create a `.env.local` file in the project root:
+
+```env
+# Primary Gemini API key (required)
+GEMINI_API_KEY=AIzaSy...
+
+# Second Gemini API key for round-robin rotation (optional but recommended)
+# Doubles your effective rate limit
+GEMINI_API_KEY_2=AIzaSy...
+```
+
+Get your free Gemini API key at [Google AI Studio](https://aistudio.google.com/app/apikey).
+
+> **Tip:** Adding a second key (`GEMINI_API_KEY_2`) enables automatic round-robin rotation and significantly reduces rate limit errors on long workflow runs.
+
+---
+
+## 🚀 Installation & Setup
 
 ### Prerequisites
-Before you begin, ensure you have:
-- **Node.js v18+** installed ([download here](https://nodejs.org/))
-- At least **one API key** — either [Anthropic](https://console.anthropic.com/) or [OpenAI](https://platform.openai.com/)
+- **Node.js v18+** ([download](https://nodejs.org/))
+- A **Gemini API key** from [Google AI Studio](https://aistudio.google.com/app/apikey) (free tier available)
 
 ### 1. Clone the Repository
 
@@ -116,82 +172,99 @@ npm install
 
 ### 3. Configure Environment Variables
 
-Create a `.env.local` file in the project root directory:
-
-```env
-# Required for Claude models
-ANTHROPIC_API_KEY=sk-ant-api03-...
-
-# Required for GPT-4o models
-OPENAI_API_KEY=sk-proj-...
+```bash
+# Create .env.local
+echo "GEMINI_API_KEY=your_key_here" > .env.local
 ```
 
-> **Note:** You only need **one key** to get started. The UI model toggle will disable unavailable options automatically.
-
-### 4. Start the Development Server
+### 4. Run the Development Server
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser. The agent interface will load immediately.
+Open [http://localhost:3000](http://localhost:3000) — the agent loads immediately.
 
-***
+### 5. Deploy to Vercel (optional)
 
-## 🚀 How to Use
-
-1. **Enter your target website URL** — paste the URL of the site you're creating content for and choose your AI model
-2. **Review the site analysis** — the agent profiles your niche, tone, and audience; edit before continuing
-3. **Examine competitor insights** — review live data on who's ranking and why
-4. **Choose your topic** — pick from 10 AI-generated suggestions or type your own
-5. **Refine keyword strategy** — review primary/secondary keywords and adjust intent targeting
-6. **Approve the outline** — restructure, add, or remove sections before writing begins
-7. **Receive your complete post** — get the full Markdown article plus all SEO metadata, ready to publish
-
-***
-
-## 📁 Project Structure
-
-```
-seo-agent/
-├── app/
-│   ├── api/                    # Next.js route handlers (one per workflow step)
-│   │   ├── analyze/            # Step 1: Website analysis
-│   │   ├── competitors/        # Step 2: Competitor research
-│   │   ├── topics/             # Step 3: Topic generation
-│   │   ├── keywords/           # Step 4: Keyword research + SERP scraping
-│   │   ├── outline/            # Step 5: Blog outline
-│   │   ├── blog/               # Step 6: Full blog post generation
-│   │   └── seo/                # Step 7: SEO metadata output
-│   ├── components/             # Reusable UI components
-│   │   ├── StepCard/           # Individual workflow step wrapper
-│   │   ├── Matrix/             # Competitor data visualization
-│   │   └── TopicSelector/      # Topic selection input UI
-│   ├── globals.css             # Global styles and design tokens
-│   └── page.js                 # Root agent interface and state management
-├── public/                     # Static assets
-├── .env.local                  # API keys (gitignored)
-├── next.config.js              # Next.js configuration
-└── package.json
+```bash
+npm install -g vercel
+vercel --prod
 ```
 
-***
+Add your environment variables in the Vercel dashboard or via CLI:
+```bash
+vercel env add GEMINI_API_KEY
+vercel env add GEMINI_API_KEY_2
+```
+
+---
+
+## 🧑‍💻 How to Use
+
+1. **Enter your website URL** — paste any live website URL (e.g. your Shopify / WordPress store)
+2. **Add optional brand context** — fill in Business Category, Key Products, Target Audience for sharper results
+3. **Select an AI model** — Gemini 2.5 Flash is recommended; switch from the dropdown anytime
+4. **Click Analyse** — the agent runs all 8 steps automatically, pausing only at decision gates
+5. **Choose your topic** — at Step 3, pick from 10 AI-generated topics ranked by seasonal urgency
+6. **Review keywords** — approve or modify keyword targeting at Step 4
+7. **Read the blog** — at Step 6, review the formatted blog. Type `approve` to continue or describe what to change
+8. **Export** — download the complete blog + SEO package as PDF or copy to clipboard
+
+---
+
+## 🔑 Key Prompt Engineering Details
+
+### Price Lock (prevents wrong price ranges)
+- **Step 1** extracts the actual `₹min – ₹max` price range from scraped homepage data
+- **Step 6** receives this as `PRICE RANGE OF THIS BRAND: ₹X – ₹Y (MAX ₹Y)` at the top of `websiteContext`
+- A `💰 PRICE LOCK` section in the blog prompt enforces: every price example must be below the brand's maximum
+- The SELF-CHECK block verifies price accuracy before output
+
+### Niche Lock (prevents wrong competitor selection)
+- 17-pattern regex classifier identifies your niche from scraped homepage + audit text
+- Niche label is injected into PROMPT_STEP2, ensuring competitor search queries are industry-specific
+- Hard rules prevent jewellery brands from being suggested for non-jewellery sites
+
+### Product Integration (mentions real products)
+- Step 6 scrapes `/collections/all`, `/shop`, `/products` from your store before writing
+- Real product names are injected into `websiteContext` under `REAL PRODUCTS ON THIS WEBSITE`
+- The blog prompt mandates mentioning at least 3–5 actual products by name
+
+### Two-Pass Blog Generation
+```
+PROMPT_STEP6 → raw blog text
+       ↓
+PROMPT_STEP6_FORMAT → reformatted (proper paragraphs, no poem-style lines)
+       ↓
+Approval gate → user approves or requests revision
+       ↓ (if revision requested)
+PROMPT_STEP6_REVISE → revised blog → PROMPT_STEP6_FORMAT again → gate again
+```
+
+### Session Persistence
+- Full workflow state saved to `localStorage` every time `stepData` changes
+- Sessions expire after **24 hours**
+- On next visit, a "Restore Session" prompt lets you continue exactly where you left off
+
+---
 
 ## 🗺️ Roadmap
 
-- [ ] **CMS Publishing** — Direct publish to WordPress, Webflow, and Ghost
-- [ ] **Export Formats** — Download posts as `.md`, `.docx`, or `.html`
-- [ ] **Multi-Language Support** — Generate blog posts in 10+ languages
-- [ ] **Keyword Difficulty Scoring** — Integrate open-source difficulty datasets
-- [ ] **Session History** — Save, revisit, and manage past blog projects
-- [ ] **Bulk Mode** — Queue multiple URLs for batch blog generation
-- [ ] **Internal Linking Suggestions** — Auto-suggest links from your existing content
+- [ ] **Shopify Integration** — auto-inject blog post directly into Shopify Blog
+- [ ] **WordPress Publishing** — REST API push to WP with one click
+- [ ] **Multi-language** — generate blogs in Hindi, Tamil, Bengali, and more regional languages
+- [ ] **Bulk Mode** — queue multiple URLs for batch blog generation overnight
+- [ ] **Internal Linking** — auto-suggest links from your existing published posts
+- [ ] **Image Suggestions** — recommend Unsplash / Pexels images per section
+- [ ] **Keyword Tracking** — track ranking position changes week over week
+- [ ] **Export to .docx** — download blog as a formatted Word document
 
-***
+---
 
 ## 🤝 Contributing
 
-Contributions are welcome! To get started:
+Contributions are welcome!
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature-name`
@@ -201,16 +274,14 @@ Contributions are welcome! To get started:
 
 Please follow [Conventional Commits](https://www.conventionalcommits.org/) for commit messages.
 
-***
+---
 
 ## 📄 License
 
 MIT © 2026 [Abhijeet Singh](https://github.com/Abhijeetsingh0022)
 
-***
+---
 
 <div align="center">
-  <sub>Built with ☕ and an unhealthy obsession with SEO by Abhijeet Singh</sub>
+  <sub>Built with ☕ and too many Gemini API calls</sub>
 </div>
-
-***
