@@ -203,42 +203,53 @@ async function detectLastBlog(siteUrl) {
 
 // ─── Gemini Direct Call ───────────────────────────────────────────
 async function callGeminiForJSON(prompt, apiKey) {
-  const model = "gemini-2.5-flash-preview-04-17";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  // Use stable models only — preview models get deprecated without notice
+  const modelsToTry = [
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+  ];
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: {
-        maxOutputTokens: 2048,
-        temperature: 0.75,
-        responseMimeType: "application/json",
-      },
-      safetySettings: [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-      ],
-    }),
-    signal: AbortSignal.timeout(30000),
-  });
+  let lastErr;
+  for (const model of modelsToTry) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 2048, temperature: 0.75 },
+          safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+          ],
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Gemini ${res.status}: ${err.slice(0, 300)}`);
+      if (!res.ok) {
+        const err = await res.text();
+        // 404 = model not found, try next
+        if (res.status === 404) { lastErr = new Error(`${model} not found`); continue; }
+        throw new Error(`Gemini ${res.status}: ${err.slice(0, 300)}`);
+      }
+
+      const data = await res.json();
+      if (data.promptFeedback?.blockReason) throw new Error(`Gemini blocked: ${data.promptFeedback.blockReason}`);
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      if (!text) { lastErr = new Error(`${model} returned empty`); continue; }
+      return text;
+    } catch (e) {
+      if (e.message?.includes("not found")) { lastErr = e; continue; }
+      throw e;
+    }
   }
-
-  const data = await res.json();
-  if (data.promptFeedback?.blockReason) {
-    throw new Error(`Gemini blocked: ${data.promptFeedback.blockReason}`);
-  }
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  if (!text) throw new Error("Gemini returned empty response");
-  return text;
+  throw lastErr || new Error("All Gemini models failed");
 }
+
 
 // ─── Build Recommendation Prompt ─────────────────────────────────
 function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth }) {
