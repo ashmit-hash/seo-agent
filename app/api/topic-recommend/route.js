@@ -166,9 +166,15 @@ async function pickMostRecentBlog(candidates, maxCheck = 6) {
   return results[0];
 }
 
+// Product URL path patterns — reject these immediately without fetching
+const PRODUCT_URL_PATTERNS = /\/(product-view|product\/|products\/|product-detail|item\/|shop\/[^/]+\/[^/]+)\//i;
+
 // ─── Helper: fetch one page and detect if it's a blog post ───────
 async function fetchArticleMeta(url) {
   try {
+    // Fast reject: known product URL patterns — no need to fetch
+    if (PRODUCT_URL_PATTERNS.test(url)) return null;
+
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
       signal: AbortSignal.timeout(7000),
@@ -238,8 +244,9 @@ async function fetchArticleMeta(url) {
 async function tryHomepageDiscovery(siteUrl) {
   const base = siteUrl.replace(/\/$/, "");
   const BLOG_KEYWORDS = /blog|article|news|journal|insight|tip|story|stories|write|post|read|resource|editorial|update|guide|fashion-class/i;
-  // URL segments/paths to skip — these are shop/collection/account links, not blog posts
-  const SKIP_PATHS = /\/(collections|products|cart|account|checkout|search|category|tag|page|pages|cdn|assets|static|media|images|fonts|css|js)\//i;
+  // URL segments/paths to skip — these are shop/product/account links, not blog posts
+  // Includes Alippo-specific paths: product-view, category-view, collection-view
+  const SKIP_PATHS = /\/(collections|products|product-view|product|category-view|collection-view|cart|account|checkout|search|category|tag|page|pages|cdn|assets|static|media|images|fonts|css|js)\//i;
   const SKIP_EXACT = new Set(["/", "/about", "/contact", "/faq", "/terms", "/privacy", "/returns", "/shipping"]);
 
   function toFull(href) {
