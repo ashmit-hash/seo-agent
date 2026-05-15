@@ -134,7 +134,7 @@ async function trySitemap(siteUrl) {
   return null;
 }
 
-// ─── Helper: fetch one article page and extract metadata ─────────
+// ─── Helper: fetch one page and detect if it's a blog post ───────
 async function fetchArticleMeta(url) {
   try {
     const res = await fetch(url, {
@@ -144,7 +144,42 @@ async function fetchArticleMeta(url) {
     if (!res.ok) return null;
     const html = await res.text();
     const $ = cheerio.load(html);
+
+    // ── Detect product page signals ────────────────────────────
+    // Product pages have prices, add-to-cart buttons, or Product schema
+    const htmlLower = html.toLowerCase();
+    const hasAddToCart = htmlLower.includes("add to cart") || htmlLower.includes("add-to-cart") || htmlLower.includes("buy now");
+    const hasPriceEl = $("[class*='price'], [itemprop='price'], [class*='product-price']").length > 0;
+
+    let isProductPage = hasAddToCart && hasPriceEl;
+    let isBlogPost = false;
+
+    // Check JSON-LD schema
+    $("script[type='application/ld+json']").each((_, el) => {
+      try {
+        const data = JSON.parse($(el).html() || "{}");
+        const items = Array.isArray(data) ? data : [data];
+        for (const item of items) {
+          if (item["@type"] === "Product") isProductPage = true;
+          if (["BlogPosting", "Article", "NewsArticle"].includes(item["@type"])) isBlogPost = true;
+        }
+      } catch { /* skip */ }
+    });
+
+    // If it's a product page and not explicitly a blog post, reject it
+    if (isProductPage && !isBlogPost) return null;
+
     $("script, style, noscript, nav, footer, header").remove();
+
+    const publishedAt =
+      $("meta[property='article:published_time']").attr("content") ||
+      $("time[datetime]").first().attr("datetime") ||
+      $("time").first().attr("datetime") ||
+      "";
+
+    // Having a published_time strongly confirms this is a blog post
+    if (publishedAt) isBlogPost = true;
+
     const title =
       $("h1").first().text().trim() ||
       $("meta[property='og:title']").attr("content") ||
@@ -154,12 +189,8 @@ async function fetchArticleMeta(url) {
       $("meta[property='og:description']").attr("content") ||
       $("article p, main p, .post-content p, .blog-post p").first().text().trim().slice(0, 400) ||
       "";
-    const publishedAt =
-      $("meta[property='article:published_time']").attr("content") ||
-      $("time[datetime]").first().attr("datetime") ||
-      $("time").first().attr("datetime") ||
-      "";
-    return { title: title || "", summary, publishedAt: publishedAt.slice(0, 10) };
+
+    return { title: title || "", summary, publishedAt: publishedAt.slice(0, 10), isBlogPost };
   } catch { return null; }
 }
 
@@ -174,7 +205,7 @@ async function fetchArticleMeta(url) {
  */
 async function tryHomepageDiscovery(siteUrl) {
   const base = siteUrl.replace(/\/$/, "");
-  const BLOG_KEYWORDS = /blog|article|news|journal|insight|tip|story|stories|write|post|read/i;
+  const BLOG_KEYWORDS = /blog|article|news|journal|insight|tip|story|stories|write|post|read|resource|editorial|update|guide|fashion-class/i;
   // URL segments/paths to skip — these are shop/collection/account links, not blog posts
   const SKIP_PATHS = /\/(collections|products|cart|account|checkout|search|category|tag|page|pages|cdn|assets|static|media|images|fonts|css|js)\//i;
   const SKIP_EXACT = new Set(["/", "/about", "/contact", "/faq", "/terms", "/privacy", "/returns", "/shipping"]);
@@ -251,9 +282,8 @@ async function tryHomepageDiscovery(siteUrl) {
     }
 
     // ── Strategy 2: Long-slug links anywhere on homepage ─────────
-    // Blog post URLs are long slugs (20+ chars). Nav/shop links are short.
-    // This catches ANY platform where blogs are linked from the homepage,
-    // regardless of URL structure or depth.
+    // Blog post URLs are long slugs (20+ chars, multiple hyphenated words).
+    // Nav/product/collection links are short or contain known e-commerce paths.
     const longSlugLinks = [];
 
     $("a[href]").each((_, el) => {
@@ -264,43 +294,59 @@ async function tryHomepageDiscovery(siteUrl) {
       const path = full.replace(base, "").split("?")[0].split("#")[0];
       if (!path || SKIP_EXACT.has(path) || SKIP_PATHS.test(path)) return;
 
-      // Strip trailing slash, get the final slug segment
+      // The slug is the last path segment (or the whole path if flat URL)
       const slug = path.replace(/\/$/, "").split("/").pop() || "";
 
-      // Blog post slugs are long (usually 20+ chars with multiple words)
-      // Nav items are short single words like "about", "contact", "shop"
+      // Blog slugs are long (many hyphenated words) — nav/collection links are short
       if (slug.length < 20) return;
 
-      // Extract title: heading inside the link, heading in the same card, or link text minus "read more"
+      // Extra signal: blog slugs have many hyphens (multiple words)
+      const hyphenCount = (slug.match(/-/g) || []).length;
+      if (hyphenCount < 2) return; // skip things like "midi-skirt-dress" → actually has 2, so this won't help
+      // Better filter: must have 3+ words in the slug
+      if (slug.split("-").length < 4) return;
+
+      // Extract title from: heading inside link → heading in parent card →
+      // paragraph near link (Alippo puts title in <p>, not <h>) → link text minus "read more"
       const headingInLink = $(el).find("h1, h2, h3, h4").first().text().trim();
       const rawLinkText = $(el).text().trim();
-      const linkTextClean = rawLinkText.replace(/read\s*more/gi, "").replace(/\s+/g, " ").trim();
+      const linkTextClean = rawLinkText.replace(/read\s*more/gi, "").replace(/by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+)*/g, "").replace(/\s+/g, " ").trim();
 
-      const parent = $(el).closest("article, section, [class*='card'], [class*='blog'], [class*='post'], [class*='item'], li");
+      // Walk up the DOM to find the card container, look for any nearby title text
+      const parent = $(el).closest("article, section, [class*='card'], [class*='blog'], [class*='post'], [class*='item'], div, li");
       const headingInParent =
         parent.find("h1, h2, h3, h4").first().text().trim() ||
-        parent.find("[class*='title'], [class*='heading']").first().text().trim();
+        parent.find("[class*='title'], [class*='heading'], [class*='name']").first().text().trim();
 
-      const title = headingInLink || headingInParent || (linkTextClean.length > 5 ? linkTextClean.slice(0, 150) : "");
+      // For Alippo: title is often in a <p> sibling of the "READ MORE" link
+      const parasInParent = parent.find("p").map((_, p) => $(p).text().trim()).get()
+        .filter(t => t.length > 10 && t.length < 200 && !(/read\s*more/i.test(t)));
+      const paraTitle = parasInParent[0] || "";
+
+      const title = headingInLink || headingInParent || paraTitle || (linkTextClean.length > 5 ? linkTextClean.slice(0, 150) : "");
 
       if (title.length > 5 && !longSlugLinks.find(l => l.url === full)) {
-        longSlugLinks.push({ url: full, title });
+        longSlugLinks.push({ url: full, title, slug });
       }
     });
 
     if (longSlugLinks.length > 0) {
-      // Sort: prefer links whose title looks like a real blog post (sentence-case, multiple words)
+      // Sort: prefer links with more words in title (blog titles are longer than product names)
       longSlugLinks.sort((a, b) => b.title.split(" ").length - a.title.split(" ").length);
-      const first = longSlugLinks[0];
-      const meta = await fetchArticleMeta(first.url);
-      if (meta?.title && meta.title.length > 5) {
-        return {
-          method: "homepage-long-slug",
-          title: meta.title,
-          url: first.url,
-          publishedAt: meta.publishedAt || "",
-          summary: meta.summary || "",
-        };
+
+      // Try each candidate — skip product pages, return first confirmed blog post
+      for (const candidate of longSlugLinks.slice(0, 5)) {
+        const meta = await fetchArticleMeta(candidate.url);
+        if (!meta) continue; // null = product page or fetch failed — skip
+        if (meta.title && meta.title.length > 5) {
+          return {
+            method: "homepage-long-slug",
+            title: meta.title,
+            url: candidate.url,
+            publishedAt: meta.publishedAt || "",
+            summary: meta.summary || "",
+          };
+        }
       }
     }
   } catch { /* homepage fetch failed */ }
