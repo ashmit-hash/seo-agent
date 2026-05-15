@@ -134,6 +134,38 @@ async function trySitemap(siteUrl) {
   return null;
 }
 
+// ─── Helper: pick the most recent post from a list of candidates ──
+/**
+ * Fetches metadata for up to N candidates, filters out product pages,
+ * sorts by publishedAt descending, and returns the most recent blog post.
+ * Falls back to DOM order (first = most recent for newest-first listings).
+ */
+async function pickMostRecentBlog(candidates, maxCheck = 6) {
+  const results = [];
+  for (const candidate of candidates.slice(0, maxCheck)) {
+    const meta = await fetchArticleMeta(candidate.url);
+    if (!meta) continue; // product page or fetch failed — skip
+    results.push({
+      url: candidate.url,
+      title: meta.title || candidate.title,
+      publishedAt: meta.publishedAt || "",
+      summary: meta.summary || "",
+      method: candidate.method || "detected",
+    });
+  }
+  if (results.length === 0) return null;
+
+  // Sort by publishedAt descending — most recent first
+  results.sort((a, b) => {
+    if (a.publishedAt && b.publishedAt) return b.publishedAt.localeCompare(a.publishedAt);
+    if (a.publishedAt) return -1; // a has date, b doesn't → a is more specific
+    if (b.publishedAt) return 1;
+    return 0; // neither has date → keep DOM order
+  });
+
+  return results[0];
+}
+
 // ─── Helper: fetch one page and detect if it's a blog post ───────
 async function fetchArticleMeta(url) {
   try {
@@ -268,15 +300,9 @@ async function tryHomepageDiscovery(siteUrl) {
         });
 
         if (articleLinks.length > 0) {
-          const first = articleLinks[0];
-          const meta = await fetchArticleMeta(first.url);
-          return {
-            method: "homepage-discovery",
-            title: meta?.title || first.title,
-            url: first.url,
-            publishedAt: meta?.publishedAt || "",
-            summary: meta?.summary || "",
-          };
+          // Check top 6 links and pick the MOST RECENT — not just the first found
+          const best = await pickMostRecentBlog(articleLinks.map(l => ({ ...l, method: "homepage-discovery" })));
+          if (best) return best;
         }
       } catch { /* try next */ }
     }
@@ -430,15 +456,9 @@ async function tryBlogIndex(siteUrl) {
       });
 
       if (links.length > 0) {
-        const first = links[0];
-        const meta = await fetchArticleMeta(first.url);
-        return {
-          method: "blog-index",
-          title: meta?.title || first.title,
-          url: first.url,
-          publishedAt: meta?.publishedAt || "",
-          summary: meta?.summary || "",
-        };
+        // Check top 6 and pick the MOST RECENT post
+        const best = await pickMostRecentBlog(links.map(l => ({ ...l, method: "blog-index" })));
+        if (best) return best;
       }
     } catch { /* try next */ }
   }
