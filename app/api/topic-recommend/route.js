@@ -169,11 +169,20 @@ async function pickMostRecentBlog(candidates, maxCheck = 6) {
 // Product URL path patterns — reject these immediately without fetching
 const PRODUCT_URL_PATTERNS = /\/(product-view|product\/|products\/|product-detail|item\/|shop\/[^/]+\/[^/]+)\//i;
 
+// Static/policy page slug keywords — these are never blog posts
+const STATIC_PAGE_SLUG = /\b(policy|policies|terms|conditions|shipping|delivery|privacy|refund|return|legal|disclaimer|cookie|about|contact|faq|help|support|sitemap|careers|press|investor)\b/i;
+
+// Title keywords that indicate a static page (not a blog post)
+const STATIC_PAGE_TITLE = /^(shipping|delivery|return|refund|privacy|terms|cookie|legal|about us|contact us|faq|careers|press release)/i;
+
 // ─── Helper: fetch one page and detect if it's a blog post ───────
 async function fetchArticleMeta(url) {
   try {
     // Fast reject: known product URL patterns — no need to fetch
     if (PRODUCT_URL_PATTERNS.test(url)) return null;
+    // Fast reject: policy/static page URL slugs
+    const urlPath = url.replace(/^https?:\/\/[^/]+/, "");
+    if (STATIC_PAGE_SLUG.test(urlPath)) return null;
 
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0" },
@@ -208,6 +217,11 @@ async function fetchArticleMeta(url) {
     if (isProductPage && !isBlogPost) return null;
 
     $("script, style, noscript, nav, footer, header").remove();
+
+    // Check page title/h1 for static page signals
+    const rawTitle = $("h1").first().text().trim() ||
+      $("meta[property='og:title']").attr("content") || "";
+    if (STATIC_PAGE_TITLE.test(rawTitle)) return null;
 
     const publishedAt =
       $("meta[property='article:published_time']").attr("content") ||
@@ -326,6 +340,8 @@ async function tryHomepageDiscovery(siteUrl) {
 
       const path = full.replace(base, "").split("?")[0].split("#")[0];
       if (!path || SKIP_EXACT.has(path) || SKIP_PATHS.test(path)) return;
+      // Skip policy/static pages by slug keywords
+      if (STATIC_PAGE_SLUG.test(path)) return;
 
       // The slug is the last path segment (or the whole path if flat URL)
       const slug = path.replace(/\/$/, "").split("/").pop() || "";
