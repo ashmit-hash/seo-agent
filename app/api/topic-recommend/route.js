@@ -134,14 +134,80 @@ async function trySitemap(siteUrl) {
   return null;
 }
 
-// ─── Method C: Blog Index Page scrape ────────────────────────────
+// ─── Method C: Shopify Blogs JSON API ────────────────────────────
+/**
+ * Shopify stores expose /blogs.json and /blogs/{handle}/articles.json
+ * This is the most reliable way to find blog posts on Shopify stores.
+ */
+async function tryShopifyBlogsAPI(siteUrl) {
+  const base = siteUrl.replace(/\/$/, "");
+  try {
+    // Step 1: Get all blogs on the store
+    const blogsRes = await fetch(`${base}/blogs.json`, {
+      headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!blogsRes.ok) return null;
+    const blogsData = await blogsRes.json();
+    const blogs = blogsData.blogs || [];
+    if (blogs.length === 0) return null;
+
+    // Step 2: For each blog handle, get the most recent article
+    for (const blog of blogs) {
+      try {
+        const articlesRes = await fetch(
+          `${base}/blogs/${blog.handle}/articles.json?limit=5&published_status=published`,
+          {
+            headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
+            signal: AbortSignal.timeout(6000),
+          }
+        );
+        if (!articlesRes.ok) continue;
+        const articlesData = await articlesRes.json();
+        const articles = articlesData.articles || [];
+        if (articles.length === 0) continue;
+
+        // Sort by published_at descending to get the most recent
+        articles.sort((a, b) => new Date(b.published_at) - new Date(a.published_at));
+        const article = articles[0];
+
+        return {
+          method: "shopify-api",
+          title: article.title || "",
+          url: `${base}/blogs/${blog.handle}/${article.handle}`,
+          publishedAt: article.published_at ? article.published_at.slice(0, 10) : "",
+          summary: article.summary_html
+            ? article.summary_html.replace(/<[^>]*>/g, "").trim().slice(0, 400)
+            : (article.body_html || "").replace(/<[^>]*>/g, "").trim().slice(0, 400),
+        };
+      } catch { /* try next blog */ }
+    }
+  } catch { /* not a Shopify store or API unavailable */ }
+  return null;
+}
+
+// ─── Method D: Blog Index Page scrape ────────────────────────────
 async function tryBlogIndex(siteUrl) {
-  const blogIndexPaths = ["/blogs", "/blog", "/journal", "/stories", "/articles", "/news"];
-  const blogPathMarkers = ["/blog/", "/blogs/", "/journal/", "/stories/", "/article/", "/post/"];
+  const base = siteUrl.replace(/\/$/, "");
+  // Shopify: try /blogs/news, /blogs/journal, /blogs/all first, then generic paths
+  const blogIndexPaths = [
+    "/blogs/news",
+    "/blogs/journal",
+    "/blogs/all",
+    "/blogs/tips",
+    "/blogs/articles",
+    "/blogs/stories",
+    "/blog",
+    "/journal",
+    "/stories",
+    "/articles",
+    "/news",
+  ];
+  const blogPathMarkers = ["/blogs/", "/blog/", "/journal/", "/stories/", "/article/", "/post/", "/news/"];
 
   for (const indexPath of blogIndexPaths) {
     try {
-      const indexUrl = `${siteUrl.replace(/\/$/, "")}${indexPath}`;
+      const indexUrl = `${base}${indexPath}`;
       const res = await fetch(indexUrl, {
         headers: { "User-Agent": "Mozilla/5.0" },
         signal: AbortSignal.timeout(8000),
@@ -151,15 +217,23 @@ async function tryBlogIndex(siteUrl) {
       const $ = cheerio.load(html);
       $("script, style, noscript, nav, footer").remove();
 
-      // Find blog post links
+      // Find blog post links — must be deeper than the index path itself
       const links = [];
       $("a[href]").each((_, el) => {
         const href = $(el).attr("href") || "";
-        if (blogPathMarkers.some(p => href.includes(p)) && href !== indexPath && href !== indexPath + "/") {
-          const fullUrl = href.startsWith("http") ? href : `${siteUrl.replace(/\/$/, "")}${href}`;
-          const titleEl = $(el).find("h2, h3, h4").first();
-          const title = titleEl.text().trim() || $(el).text().trim().slice(0, 150);
-          if (title.length > 3 && !links.find(l => l.url === fullUrl)) {
+        const fullUrl = href.startsWith("http") ? href : `${base}${href}`;
+        // Must contain a blog path marker AND be longer than the index path (an actual article)
+        const isBlogArticle = blogPathMarkers.some(p => href.includes(p)) &&
+          href.length > indexPath.length + 2 &&
+          href !== indexPath &&
+          href !== indexPath + "/";
+        if (isBlogArticle && !links.find(l => l.url === fullUrl)) {
+          // Try to get title from heading inside link, or from link text
+          const titleEl = $(el).find("h1, h2, h3, h4").first();
+          const title = titleEl.text().trim() ||
+            $(el).closest("article, .card, [class*='blog'], [class*='post']").find("h1, h2, h3").first().text().trim() ||
+            $(el).text().trim().slice(0, 150);
+          if (title.length > 3) {
             links.push({ url: fullUrl, title });
           }
         }
@@ -167,11 +241,36 @@ async function tryBlogIndex(siteUrl) {
 
       if (links.length > 0) {
         const first = links[0];
+        // Try to fetch the article to get a summary
+        try {
+          const postRes = await fetch(first.url, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(6000),
+          });
+          if (postRes.ok) {
+            const postHtml = await postRes.text();
+            const p$ = cheerio.load(postHtml);
+            p$("script, style, noscript, nav, footer, header").remove();
+            const metaDesc = p$("meta[name='description']").attr("content") ||
+              p$("meta[property='og:description']").attr("content") || "";
+            const h1 = p$("h1").first().text().trim();
+            const publishedAt = p$("meta[property='article:published_time']").attr("content") ||
+              p$("time[datetime]").first().attr("datetime") || "";
+            return {
+              method: "blog-index",
+              title: h1 || first.title,
+              url: first.url,
+              publishedAt: publishedAt ? publishedAt.slice(0, 10) : "",
+              summary: metaDesc,
+            };
+          }
+        } catch { /* use link-only data */ }
+
         return {
           method: "blog-index",
           title: first.title,
           url: first.url,
-          publishedAt: null,
+          publishedAt: "",
           summary: "",
         };
       }
@@ -282,19 +381,23 @@ async function detectLastBlog(siteUrl) {
   let domain = siteUrl;
   try { domain = new URL(siteUrl).hostname; } catch { /* use as-is */ }
 
-  // Method A: PayloadCMS
+  // Method A: PayloadCMS (Alippo-specific)
   const payloadResult = await tryPayloadCMS(domain);
   if (payloadResult) return payloadResult;
 
-  // Method B: Sitemap
+  // Method B: Shopify Blogs JSON API (most reliable for Shopify stores)
+  const shopifyResult = await tryShopifyBlogsAPI(siteUrl);
+  if (shopifyResult) return shopifyResult;
+
+  // Method C: Sitemap XML
   const sitemapResult = await trySitemap(siteUrl);
   if (sitemapResult) return sitemapResult;
 
-  // Method C: Blog index
+  // Method D: Blog index page scrape
   const indexResult = await tryBlogIndex(siteUrl);
   if (indexResult) return indexResult;
 
-  // Method D: No blog found
+  // No blog found
   return { method: "none", isFirstBlog: true };
 }
 
