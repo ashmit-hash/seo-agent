@@ -166,14 +166,24 @@ async function fetchArticleMeta(url) {
 // ─── Method C: Homepage discovery (nav + article cards) ──────────
 /**
  * Works for ANY platform (Alippo, WordPress, custom).
- * Strategy 1: Find nav links with blog keywords → visit those pages → find posts.
- * Strategy 2: Scan homepage itself for article cards with "Read More" links
- *             (catches sites where blog is not in nav but shown as homepage section).
+ * Strategy 1: Nav links with blog keywords → visit those pages → find posts.
+ * Strategy 2: Long-slug links on homepage — blog URLs are long slugs like
+ *   /the-akshaya-tritiya-style-guide-why-champagne-gold-are-2026s-power-colors
+ *   whereas nav links are short (/about, /contact, /shop).
+ *   Works regardless of URL depth (flat or nested).
  */
 async function tryHomepageDiscovery(siteUrl) {
   const base = siteUrl.replace(/\/$/, "");
   const BLOG_KEYWORDS = /blog|article|news|journal|insight|tip|story|stories|write|post|read/i;
-  const READ_MORE_TEXT = /^(read\s*more|read|know\s*more|learn\s*more|view\s*more|see\s*more|explore)$/i;
+  // URL segments/paths to skip — these are shop/collection/account links, not blog posts
+  const SKIP_PATHS = /\/(collections|products|cart|account|checkout|search|category|tag|page|pages|cdn|assets|static|media|images|fonts|css|js)\//i;
+  const SKIP_EXACT = new Set(["/", "/about", "/contact", "/faq", "/terms", "/privacy", "/returns", "/shipping"]);
+
+  function toFull(href) {
+    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) return "";
+    if (href.startsWith("http")) return href;
+    return `${base}${href.startsWith("/") ? "" : "/"}${href}`;
+  }
 
   try {
     const homeRes = await fetch(base, {
@@ -184,14 +194,14 @@ async function tryHomepageDiscovery(siteUrl) {
     const homeHtml = await homeRes.text();
     const $ = cheerio.load(homeHtml);
 
-    // ── Strategy 1: Find blog index via nav/footer links ──────────
+    // ── Strategy 1: Nav/footer blog index links ───────────────────
     const candidateIndexUrls = new Set();
     $("a[href]").each((_, el) => {
       const href = $(el).attr("href") || "";
       const text = $(el).text().trim();
       if (BLOG_KEYWORDS.test(href) || BLOG_KEYWORDS.test(text)) {
-        const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-        if (full.startsWith(base)) candidateIndexUrls.add(full);
+        const full = toFull(href);
+        if (full && full.startsWith(base)) candidateIndexUrls.add(full);
       }
     });
 
@@ -211,16 +221,16 @@ async function tryHomepageDiscovery(siteUrl) {
 
         i$("a[href]").each((_, el) => {
           const href = i$(el).attr("href") || "";
-          const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-          if (!full.startsWith(base)) return;
+          const full = toFull(href);
+          if (!full || !full.startsWith(base)) return;
           const path = full.replace(base, "");
           if (path.length > indexPath.length + 3 && path.startsWith(indexPath)) {
             const title =
               i$(el).find("h1, h2, h3, h4").first().text().trim() ||
               i$(el).closest("article, .card, [class*='blog'], [class*='post'], [class*='article']")
                 .find("h1, h2, h3").first().text().trim() ||
-              i$(el).text().trim().slice(0, 150);
-            if (title.length > 3 && !articleLinks.find(l => l.url === full)) {
+              i$(el).text().replace(/read\s*more/gi, "").trim().slice(0, 150);
+            if (title.length > 5 && !articleLinks.find(l => l.url === full)) {
               articleLinks.push({ url: full, title });
             }
           }
@@ -237,44 +247,61 @@ async function tryHomepageDiscovery(siteUrl) {
             summary: meta?.summary || "",
           };
         }
-      } catch { /* try next candidate */ }
+      } catch { /* try next */ }
     }
 
-    // ── Strategy 2: Scan homepage article cards directly ──────────
-    // Looks for "Read More" / "Read" links inside article/card containers
-    // Works for sites where the blog section IS on the homepage but not in nav
-    const homepageArticleLinks = [];
+    // ── Strategy 2: Long-slug links anywhere on homepage ─────────
+    // Blog post URLs are long slugs (20+ chars). Nav/shop links are short.
+    // This catches ANY platform where blogs are linked from the homepage,
+    // regardless of URL structure or depth.
+    const longSlugLinks = [];
+
     $("a[href]").each((_, el) => {
       const href = $(el).attr("href") || "";
-      const linkText = $(el).text().trim();
-      const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-      if (!full.startsWith(base) || href === "/" || href === "") return;
+      const full = toFull(href);
+      if (!full || !full.startsWith(base)) return;
 
-      const pathSegments = full.replace(base, "").split("/").filter(Boolean);
-      // Only deep links (2+ segments) with "Read More" text OR blog keyword in href
-      const isReadMoreLink = READ_MORE_TEXT.test(linkText);
-      const hasBlogHref = BLOG_KEYWORDS.test(href);
-      if (pathSegments.length >= 2 && (isReadMoreLink || hasBlogHref)) {
-        // Try to find a heading nearby (in the same card/article parent)
-        const parent = $(el).closest("article, section, div, li");
-        const nearbyTitle = parent.find("h1, h2, h3, h4").first().text().trim() ||
-          parent.find("[class*='title'], [class*='heading'], [class*='name']").first().text().trim();
-        if (nearbyTitle.length > 3 && !homepageArticleLinks.find(l => l.url === full)) {
-          homepageArticleLinks.push({ url: full, title: nearbyTitle });
-        }
+      const path = full.replace(base, "").split("?")[0].split("#")[0];
+      if (!path || SKIP_EXACT.has(path) || SKIP_PATHS.test(path)) return;
+
+      // Strip trailing slash, get the final slug segment
+      const slug = path.replace(/\/$/, "").split("/").pop() || "";
+
+      // Blog post slugs are long (usually 20+ chars with multiple words)
+      // Nav items are short single words like "about", "contact", "shop"
+      if (slug.length < 20) return;
+
+      // Extract title: heading inside the link, heading in the same card, or link text minus "read more"
+      const headingInLink = $(el).find("h1, h2, h3, h4").first().text().trim();
+      const rawLinkText = $(el).text().trim();
+      const linkTextClean = rawLinkText.replace(/read\s*more/gi, "").replace(/\s+/g, " ").trim();
+
+      const parent = $(el).closest("article, section, [class*='card'], [class*='blog'], [class*='post'], [class*='item'], li");
+      const headingInParent =
+        parent.find("h1, h2, h3, h4").first().text().trim() ||
+        parent.find("[class*='title'], [class*='heading']").first().text().trim();
+
+      const title = headingInLink || headingInParent || (linkTextClean.length > 5 ? linkTextClean.slice(0, 150) : "");
+
+      if (title.length > 5 && !longSlugLinks.find(l => l.url === full)) {
+        longSlugLinks.push({ url: full, title });
       }
     });
 
-    if (homepageArticleLinks.length > 0) {
-      const first = homepageArticleLinks[0];
+    if (longSlugLinks.length > 0) {
+      // Sort: prefer links whose title looks like a real blog post (sentence-case, multiple words)
+      longSlugLinks.sort((a, b) => b.title.split(" ").length - a.title.split(" ").length);
+      const first = longSlugLinks[0];
       const meta = await fetchArticleMeta(first.url);
-      return {
-        method: "homepage-article-card",
-        title: meta?.title || first.title,
-        url: first.url,
-        publishedAt: meta?.publishedAt || "",
-        summary: meta?.summary || "",
-      };
+      if (meta?.title && meta.title.length > 5) {
+        return {
+          method: "homepage-long-slug",
+          title: meta.title,
+          url: first.url,
+          publishedAt: meta.publishedAt || "",
+          summary: meta.summary || "",
+        };
+      }
     }
   } catch { /* homepage fetch failed */ }
   return null;
