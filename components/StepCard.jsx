@@ -10,7 +10,6 @@ import LoadingIndicator from "./LoadingIndicator";
 import GateInput from "./GateInput";
 import SerpInsights from "./SerpInsights";
 import KeywordGrid from "./KeywordGrid";
-import CompetitorGrid from "./CompetitorGrid";
 
 export default function StepCard({ step, data, onRetry, onGateSubmit }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -174,7 +173,7 @@ export default function StepCard({ step, data, onRetry, onGateSubmit }) {
             </div>
           )}
 
-          {step.id === 4 && data.text ? (
+          {step.id === 3 && data.text ? (
             <KeywordGrid text={data.text} />
           ) : (
             data.text && <MarkdownContent text={data.text} />

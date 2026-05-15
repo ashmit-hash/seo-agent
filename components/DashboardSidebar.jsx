@@ -93,10 +93,9 @@ export default function DashboardSidebar({
     // Semantic Depth: scales progressively as steps are completed
     const sRaw = (
       extractSemanticCount(stepData[1]?.text) * 1.0 +
-      extractSemanticCount(stepData[2]?.text) * 1.2 +
-      extractSemanticCount(stepData[3]?.text) * 1.0 +
-      extractSemanticCount(stepData[4]?.text) * 2.0 +
-      extractSemanticCount(stepData[6]?.text) * 3.5
+      extractSemanticCount(stepData[2]?.text) * 1.0 +
+      extractSemanticCount(stepData[3]?.text) * 2.0 +
+      extractSemanticCount(stepData[5]?.text) * 3.5
     );
     const semanticDepth = completedCount === 0 ? 0 : Math.min(Math.round(sRaw * 0.8), 97);
 
@@ -114,16 +113,13 @@ export default function DashboardSidebar({
       if (stepData[6]?.status === 'done' && blog.wordCount > 0) {
         const issueCount = blog.issues.length;
         intelligenceSummary = `Blog post: ${blog.wordCount.toLocaleString()} words | ${blog.h2Count} H2s | ${blog.h3Count} H3s | SXO: ${sxoScore}/97. ${issueCount > 0 ? `${issueCount} content gap(s) detected — see suggestions below.` : 'Content structure meets all quality criteria.'}`;
-      } else if (stepData[4]?.status === 'done') {
-        const kws = extractSemanticCount(stepData[4]?.text);
-        intelligenceSummary = `Keyword Research complete — ${kws} entities identified. Building ${stepData[5] ? 'blog post' : 'content outline'}...`;
       } else if (stepData[3]?.status === 'done') {
-        intelligenceSummary = "Topic cluster ready. Select a topic card to begin keyword research.";
+        const kws = extractSemanticCount(stepData[3]?.text);
+        intelligenceSummary = `Keyword Research complete — ${kws} entities identified. Building ${stepData[4] ? 'blog post' : 'content outline'}...`;
       } else if (stepData[2]?.status === 'done') {
-        const rivalCount = (stepData[2]?.text?.match(/competitor|rival/gi) || []).length;
-        intelligenceSummary = `Competitor analysis complete — ${rivalCount > 0 ? rivalCount + ' rival signals found.' : 'generating 2025–2026 topic clusters.'}`;
+        intelligenceSummary = "Topic cluster ready. Select a topic card to begin keyword research.";
       } else if (stepData[1]?.status === 'done') {
-        intelligenceSummary = "Brand audit complete. Scanning live competitor landscape...";
+        intelligenceSummary = "Brand audit complete. Generating seasonal topic ideas...";
       }
     }
 
@@ -145,12 +141,10 @@ export default function DashboardSidebar({
       suggestions = dynamicSuggestions.length > 0
         ? dynamicSuggestions.slice(0, 4)
         : ['Content structure meets all quality criteria. Proceed to Step 7 SEO meta.'];
-    } else if (stepData[4]?.status === 'done') {
-      suggestions = ["Incorporate the Primary Keyword in the first 100 words.", "Use at least 3 LSI terms to improve semantic density."];
     } else if (stepData[3]?.status === 'done') {
-      suggestions = ["Prioritize Pillar Content for long-term topical clustering.", "Select a 'Decision Intent' topic for high conversion."];
+      suggestions = ["Incorporate the Primary Keyword in the first 100 words.", "Use at least 3 LSI terms to improve semantic density."];
     } else if (stepData[2]?.status === 'done') {
-      suggestions = ["Target the Content Gaps where rivals have zero visibility.", "Leapfrog competitors using the Strategic Recommendation."];
+      suggestions = ["Prioritize Pillar Content for long-term topical clustering.", "Select a 'Decision Intent' topic for high conversion."];
     } else if (stepData[1]?.status === 'done') {
       suggestions = ["Focus on the primary Entity to anchor your authority.", "Check if Brand Voice aligns with your target persona."];
     }
@@ -165,26 +159,26 @@ export default function DashboardSidebar({
     const strategyScore = stepData[1]?.status === 'done'
       ? Math.min(Math.round(countWords(stepData[1]?.text) / 7), 90) : 0;
 
-    // Step 2 — Rivals: scored from word count (typical: 300-500 words)
-    const rivalsScore = stepData[2]?.status === 'done'
+    // Step 2 — Topics: scored from word count
+    const topicsScore = stepData[2]?.status === 'done'
       ? Math.min(Math.round(countWords(stepData[2]?.text) / 6), 90) : 0;
 
     // Semantic: the progressively built score from the metrics hook
     const semanticScore = metrics.semanticDepth;
 
-    // Step 4 — Keywords: count actual 'Target Keyword:' lines found (10 = full score)
-    const kwFound = (stepData[4]?.text?.match(/Target Keyword:/gi) || []).length;
+    // Step 3 — Keywords: count actual 'Target Keyword:' lines found (10 = full score)
+    const kwFound = (stepData[3]?.text?.match(/Target Keyword:/gi) || []).length;
     const keywordsScore = kwFound >= 10 ? 92 : kwFound >= 5 ? 65 : kwFound > 0 ? 35 : 0;
 
-    // Step 6 — SXO: real score from blog analysis (0 until blog written)
+    // Step 5 — SXO: real score from blog analysis (0 until blog written)
     const sxoScore = metrics.sxoScore;
 
-    // Step 7 — SEO Meta: binary, done or not
-    const seoMetaScore = stepData[7]?.status === 'done' ? 88 : (stepData[6]?.status === 'done' ? 18 : 0);
+    // Step 6 — SEO Meta: binary, done or not
+    const seoMetaScore = stepData[6]?.status === 'done' ? 88 : (stepData[5]?.status === 'done' ? 18 : 0);
 
     return [
       { subject: 'Strategy', A: strategyScore, fullMark: 100 },
-      { subject: 'Rivals',   A: rivalsScore,   fullMark: 100 },
+      { subject: 'Topics',   A: topicsScore,   fullMark: 100 },
       { subject: 'Semantic', A: semanticScore,  fullMark: 100 },
       { subject: 'Keywords', A: keywordsScore,  fullMark: 100 },
       { subject: 'SXO',      A: sxoScore,       fullMark: 100 },
@@ -199,14 +193,14 @@ export default function DashboardSidebar({
     return [
       { name: 'S1', score: (cum += w(1), Math.min(Math.round(cum / 50), 100)) },
       { name: 'S2', score: (cum += w(2), Math.min(Math.round(cum / 50), 100)) },
-      { name: 'S4', score: (cum += w(4), Math.min(Math.round(cum / 50), 100)) },
+      { name: 'S3', score: (cum += w(3), Math.min(Math.round(cum / 50), 100)) },
+      { name: 'S5', score: (cum += w(5), Math.min(Math.round(cum / 50), 100)) },
       { name: 'S6', score: (cum += w(6), Math.min(Math.round(cum / 50), 100)) },
-      { name: 'S7', score: (cum += w(7), Math.min(Math.round(cum / 50), 100)) },
     ];
   }, [stepData]);
 
   const hasRankings = internalData.rankings?.length > 0;
-  const step4Loading = stepData[4]?.status === 'loading';
+  const step4Loading = stepData[3]?.status === 'loading';
   const step4Pending = !stepData[4];
 
   return (
