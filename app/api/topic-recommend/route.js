@@ -2,7 +2,7 @@ export const runtime = "nodejs";
 
 import * as cheerio from "cheerio";
 import { KeyRotator } from "@/lib/keys";
-import { getFestivalsForMonth, getCurrentMonthIST } from "@/lib/festivalCalendar";
+import { getFestivalsForMonth, getCurrentMonthIST, YEAR_SPECIFIC_FESTIVAL_DATES } from "@/lib/festivalCalendar";
 
 // ─── PayloadCMS config (Alippo's CMS) ────────────────────────────
 // Try multiple possible CMS base URLs
@@ -163,15 +163,17 @@ async function fetchArticleMeta(url) {
   } catch { return null; }
 }
 
-// ─── Method C: Homepage navigation discovery ──────────────────────
+// ─── Method C: Homepage discovery (nav + article cards) ──────────
 /**
- * Fetches the homepage and nav to discover the blog section.
- * Works for ANY platform (Alippo, WordPress, custom, etc.)
- * because it follows the site's own navigation links.
+ * Works for ANY platform (Alippo, WordPress, custom).
+ * Strategy 1: Find nav links with blog keywords → visit those pages → find posts.
+ * Strategy 2: Scan homepage itself for article cards with "Read More" links
+ *             (catches sites where blog is not in nav but shown as homepage section).
  */
 async function tryHomepageDiscovery(siteUrl) {
   const base = siteUrl.replace(/\/$/, "");
   const BLOG_KEYWORDS = /blog|article|news|journal|insight|tip|story|stories|write|post|read/i;
+  const READ_MORE_TEXT = /^(read\s*more|read|know\s*more|learn\s*more|view\s*more|see\s*more|explore)$/i;
 
   try {
     const homeRes = await fetch(base, {
@@ -182,51 +184,39 @@ async function tryHomepageDiscovery(siteUrl) {
     const homeHtml = await homeRes.text();
     const $ = cheerio.load(homeHtml);
 
-    // Step 1: Find candidate "blog section" URLs from nav / footer / all links
+    // ── Strategy 1: Find blog index via nav/footer links ──────────
     const candidateIndexUrls = new Set();
     $("a[href]").each((_, el) => {
       const href = $(el).attr("href") || "";
       const text = $(el).text().trim();
-      // A nav link that mentions blog/article in its href OR its visible text
       if (BLOG_KEYWORDS.test(href) || BLOG_KEYWORDS.test(text)) {
         const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-        // Only same-domain links
         if (full.startsWith(base)) candidateIndexUrls.add(full);
       }
     });
 
-    if (candidateIndexUrls.size === 0) return null;
-
-    // Step 2: Visit each candidate index page and look for article links
     for (const indexUrl of candidateIndexUrls) {
       try {
         const idxRes = await fetch(indexUrl, {
           headers: { "User-Agent": "Mozilla/5.0" },
-          signal: AbortSignal.timeout(8000),
+          signal: AbortSignal.timeout(7000),
         });
         if (!idxRes.ok) continue;
         const idxHtml = await idxRes.text();
         const i$ = cheerio.load(idxHtml);
         i$("script, style, noscript").remove();
 
-        // Collect article links — must be deeper than indexUrl (i.e., an actual post)
         const indexPath = new URL(indexUrl).pathname;
         const articleLinks = [];
 
         i$("a[href]").each((_, el) => {
           const href = i$(el).attr("href") || "";
           const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
-          if (!full.startsWith(base)) return; // skip external links
+          if (!full.startsWith(base)) return;
           const path = full.replace(base, "");
-          // Must be deeper than the index (e.g. /blog/post-title not just /blog)
-          if (
-            path.length > indexPath.length + 3 &&
-            path.startsWith(indexPath) &&
-            !path.endsWith(indexPath)
-          ) {
-            const titleEl = i$(el).find("h1, h2, h3, h4").first();
+          if (path.length > indexPath.length + 3 && path.startsWith(indexPath)) {
             const title =
-              titleEl.text().trim() ||
+              i$(el).find("h1, h2, h3, h4").first().text().trim() ||
               i$(el).closest("article, .card, [class*='blog'], [class*='post'], [class*='article']")
                 .find("h1, h2, h3").first().text().trim() ||
               i$(el).text().trim().slice(0, 150);
@@ -248,6 +238,43 @@ async function tryHomepageDiscovery(siteUrl) {
           };
         }
       } catch { /* try next candidate */ }
+    }
+
+    // ── Strategy 2: Scan homepage article cards directly ──────────
+    // Looks for "Read More" / "Read" links inside article/card containers
+    // Works for sites where the blog section IS on the homepage but not in nav
+    const homepageArticleLinks = [];
+    $("a[href]").each((_, el) => {
+      const href = $(el).attr("href") || "";
+      const linkText = $(el).text().trim();
+      const full = href.startsWith("http") ? href : `${base}${href.startsWith("/") ? "" : "/"}${href}`;
+      if (!full.startsWith(base) || href === "/" || href === "") return;
+
+      const pathSegments = full.replace(base, "").split("/").filter(Boolean);
+      // Only deep links (2+ segments) with "Read More" text OR blog keyword in href
+      const isReadMoreLink = READ_MORE_TEXT.test(linkText);
+      const hasBlogHref = BLOG_KEYWORDS.test(href);
+      if (pathSegments.length >= 2 && (isReadMoreLink || hasBlogHref)) {
+        // Try to find a heading nearby (in the same card/article parent)
+        const parent = $(el).closest("article, section, div, li");
+        const nearbyTitle = parent.find("h1, h2, h3, h4").first().text().trim() ||
+          parent.find("[class*='title'], [class*='heading'], [class*='name']").first().text().trim();
+        if (nearbyTitle.length > 3 && !homepageArticleLinks.find(l => l.url === full)) {
+          homepageArticleLinks.push({ url: full, title: nearbyTitle });
+        }
+      }
+    });
+
+    if (homepageArticleLinks.length > 0) {
+      const first = homepageArticleLinks[0];
+      const meta = await fetchArticleMeta(first.url);
+      return {
+        method: "homepage-article-card",
+        title: meta?.title || first.title,
+        url: first.url,
+        publishedAt: meta?.publishedAt || "",
+        summary: meta?.summary || "",
+      };
     }
   } catch { /* homepage fetch failed */ }
   return null;
@@ -537,7 +564,7 @@ function getTodayISTString() {
  * Uses the festival's date string (e.g. "Second Sunday of May", "January 14", "May (varies)")
  * Returns true if the festival MIGHT still be upcoming (conservative — keep if unsure).
  */
-function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
+function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalName) {
   const year  = todayIST.getFullYear();
   const todayDay = todayIST.getDate();
   const todayMonth = todayIST.getMonth(); // 0-indexed
@@ -547,6 +574,22 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
     July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
   };
   const targetMonthIdx = MONTH_INDEX[targetMonthName] ?? -1;
+
+  // ── Year-specific lookup for "varies" festivals ───────────────
+  // Check the actual date for this year before falling back to string parsing
+  if (festivalName && YEAR_SPECIFIC_FESTIVAL_DATES[festivalName]) {
+    const yearData = YEAR_SPECIFIC_FESTIVAL_DATES[festivalName][year];
+    if (yearData) {
+      const actualMonthIdx = MONTH_INDEX[yearData.month] ?? -1;
+      const actualDay = yearData.day;
+      // If the festival actually falls in a DIFFERENT month this year, it's not in targetMonth
+      if (actualMonthIdx !== targetMonthIdx) return false;
+      // Same month — check if day has passed
+      if (actualMonthIdx === todayMonth) return actualDay >= todayDay;
+      if (actualMonthIdx > todayMonth) return true;
+      return false; // actualMonth < todayMonth → already passed
+    }
+  }
 
   // If target month is in the future → all festivals are upcoming
   if (targetMonthIdx > todayMonth) return true;
@@ -570,7 +613,6 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
     const dayName = nthDayMatch[2];
     const DAY_MAP = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
     const targetDay = DAY_MAP[dayName] ?? 0;
-    // Find nth occurrence in the target month
     let count = 0;
     for (let d = 1; d <= 31; d++) {
       const dt = new Date(year, targetMonthIdx, d);
@@ -578,18 +620,20 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
       if (dt.getDay() === targetDay) {
         count++;
         if (count === ordinal || ordinal === -1) {
-          return d >= todayDay; // upcoming if the computed day >= today
+          return d >= todayDay;
         }
       }
     }
   }
 
-  // Pattern contains "full moon" — hard to predict exactly; if we're past ~15th assume passed
+  // Pattern contains "full moon" — check year-specific; else if past ~15th assume passed
   if (/full moon/i.test(dateStr)) {
     return todayDay <= 14;
   }
 
-  // Pattern: "varies", "April or May", etc. — uncertain; keep it but mark as variable
+  // Pattern: "varies", etc. — no year-specific data, drop conservatively if month matches today
+  // If we're in the same month and no year-specific date, assume it may have passed mid-month
+  if (targetMonthIdx === todayMonth && todayDay > 15) return false;
   return true;
 }
 
@@ -681,8 +725,8 @@ export async function POST(req) {
     const todayString = getTodayISTString();
 
     // Filter out festivals that have already passed this month
-    const allFestivals     = getFestivalsForMonth(resolvedMonth);
-    const festivals        = allFestivals.filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST));
+    const allFestivals = getFestivalsForMonth(resolvedMonth);
+    const festivals    = allFestivals.filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST, f.name));
 
     // ── Detect last blog + scrape products in parallel ───────────
     let lastBlog = null;
