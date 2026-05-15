@@ -737,11 +737,20 @@ ${actualProducts.map(p => `• ${p}`).join("\n")}
 CRITICAL PRODUCT RULE: You MUST ONLY recommend blog topics about products and categories that are explicitly listed above. If the list above contains knee supports, compression socks, and back belts — write about THOSE products only. Do NOT invent, assume, or hallucinate any product that is not in this list. If you cannot find a relevant festival angle for these exact products, skip the festival and recommend an evergreen topic for the listed products instead.`
     : `ACTUAL PRODUCTS: Could not be scraped automatically. Use the Brand Audit and Niche to infer products, but be conservative — only mention product types that are clearly implied by the brand niche.`;
 
+  // Extract festival names mentioned in the last blog title so we don't repeat them
+  const lastBlogTitle = (!isFirstBlog && lastBlog?.title) ? lastBlog.title.toLowerCase() : "";
+  const alreadyCoveredFestivals = festivals
+    .filter(f => lastBlogTitle.includes(f.name.toLowerCase().split(" ")[0]))
+    .map(f => f.name);
+  const alreadyCoveredNote = alreadyCoveredFestivals.length > 0
+    ? `\nDO NOT REPEAT: The last blog already covered ${alreadyCoveredFestivals.join(", ")}. Do NOT recommend a topic about the same festival. Choose a different angle or festival entirely.`
+    : "";
+
   return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic.
 
 TODAY'S DATE: ${todayString}
 
-CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.${alreadyCoveredNote}
 
 ---
 BRAND:
@@ -761,7 +770,7 @@ TARGET PUBLISH MONTH: ${targetMonth}
 INSTRUCTIONS:
 Recommend exactly ONE blog topic that:
 1. Builds on or naturally complements the last blog (different angle, not a rehash) — or is the best first post if no blog exists
-2. Ties to a festival or commercial moment still UPCOMING in ${targetMonth} (after ${todayString}) IF relevant to this niche. If no upcoming festival is relevant, skip the festival angle entirely.
+2. Ties to a festival or commercial moment still UPCOMING in ${targetMonth} (after ${todayString}) IF relevant to this niche. If no upcoming festival is relevant, skip the festival angle entirely and recommend strong evergreen content instead.
 3. Serves commercial intent — drives traffic toward the brand's product/collection pages
 4. Has real search demand in India (the kind of query a real person types into Google)
 
