@@ -163,41 +163,7 @@ export default function TopicRecommendation({
         </div>
       </div>
 
-      {/* ── Last Blog Reference ───────────────── */}
-      {!isFirstBlog && lastBlog && (
-        <div className="topic-rec-last-blog">
-          <p className="topic-rec-last-blog-label">
-            <BookOpen size={11} />
-            Based on your last published post:
-          </p>
-          <div className="topic-rec-last-blog-card">
-            <span className="topic-rec-last-blog-title">
-              {lastBlog.title || recommendation?.lastBlogReference?.title || "Previous blog"}
-            </span>
-            {(lastBlog.publishedAt || recommendation?.lastBlogReference?.publishedAt) && (
-              <span className="topic-rec-last-blog-date">
-                {lastBlog.publishedAt || recommendation?.lastBlogReference?.publishedAt}
-              </span>
-            )}
-            {(lastBlog.url || recommendation?.lastBlogReference?.url) && (
-              <a
-                href={lastBlog.url || recommendation?.lastBlogReference?.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="topic-rec-last-blog-link"
-              >
-                <ExternalLink size={10} /> View post
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-
-      {isFirstBlog && (
-        <div className="topic-rec-first-blog-note">
-          No previous blogs detected — recommendation is based on niche and festival calendar only.
-        </div>
-      )}
+      {/* Last Blog Reference and first-blog note removed — detection unreliable */}
 
       {/* ── Bottom CTA ───────────────────────── */}
       <div className="topic-rec-bottom-cta">
