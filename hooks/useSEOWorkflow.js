@@ -605,13 +605,15 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   }, [callSEO, patchStep, runStep6]);
 
   // ── Step 4 → now Step 3 ──────────────────────────────────────
-  const runStep4 = useCallback(async (topicChoice) => {
-    const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[2]?.text);
-    stepInputsRef.current[3] = { topic: resolvedTopic, originalChoice: topicChoice };
+  const runStep4 = useCallback(async (topicChoice, primaryKeyword) => {
+    // Step 2 now always provides the full resolved title — no number-parsing needed
+    const resolvedTopic = topicChoice || resolveTopicChoice(topicChoice, "");
+    const serpQuery = primaryKeyword || resolvedTopic;
+    stepInputsRef.current[3] = { topic: resolvedTopic, originalChoice: topicChoice, primaryKeyword: primaryKeyword || "" };
     patchStep(2, { gate: null, status: "done" });
     patchStep(3, { status: "loading" });
     try {
-      const serpRes    = await fetchSERP(resolvedTopic);
+      const serpRes    = await fetchSERP(serpQuery);
       const serpDataStr = serpRes ? JSON.stringify(serpRes.organic ?? []) : "";
       stepInputsRef.current[3].serpDataStr = serpDataStr;
 
@@ -634,46 +636,54 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     }
   }, [callSEO, patchStep, checkRankings, runStep5]);
 
-  // ── Step 3 → now Step 2 — Seasonal Topic Generation ────────
-  const runStep3 = useCallback(async () => {
+  // ── Step 2 — Smart Topic Recommendation ─────────────────────
+  const runStep2Recommend = useCallback(async (targetMonth) => {
     stepInputsRef.current[2] = {};
-    patchStep(2, { status: "loading" });
+    patchStep(2, { status: "loading", recommendation: null, text: null });
     try {
-      const auditText    = stepDataRef.current[1]?.text ?? "";
-      const scrapeCtx    = stepInputsRef.current[1]?.scrapeContext ?? "";
-      const niche        = extractNicheFromAudit(auditText, scrapeCtx);
-      const currentMonth = new Date().toLocaleString("en-US", { month: "long" });
+      const auditText = stepDataRef.current[1]?.text ?? "";
+      const scrapeCtx = stepInputsRef.current[1]?.scrapeContext ?? "";
+      const siteUrl   = siteUrlRef.current;
+      const niche     = extractNicheFromAudit(auditText, scrapeCtx);
 
-      const nicheContext = [
-        `Niche: ${niche}`,
-        scrapeCtx ? `Brand Context:\n${scrapeCtx.slice(0, 400)}` : "",
-        `Current Month: ${currentMonth}`,
-      ].filter(Boolean).join("\n");
+      const resolvedMonth = targetMonth || new Date().toLocaleString("en-US", {
+        month: "long", timeZone: "Asia/Kolkata",
+      });
 
-      stepInputsRef.current[2] = { niche, nicheContext };
+      stepInputsRef.current[2] = { niche, targetMonth: resolvedMonth };
 
-      const d3 = await callSEO(
-        PROMPT_STEP3(nicheContext, currentMonth),
-        4096,
-        true
-      );
+      const res = await fetch("/api/topic-recommend", {
+        method : "POST",
+        headers: { "Content-Type": "application/json" },
+        body   : JSON.stringify({
+          siteUrl,
+          niche,
+          brandAudit  : auditText.slice(0, 800),
+          scrapeContext: scrapeCtx.slice(0, 400),
+          targetMonth : resolvedMonth,
+        }),
+      }).then(r => r.json());
+
+      if (res.error) throw new Error(res.error);
+
+      stepInputsRef.current[2].primaryKeyword = res.recommendation?.primaryKeyword ?? "";
+      stepInputsRef.current[2].recommendedTopic = res.recommendation?.recommendedTopic ?? "";
 
       patchStep(2, {
-        status  : "waiting",
-        text    : d3.text,
-        canRetry: false,
-        gate    : {
-          type       : "topic-select",
-          prompt     : "Which seasonal topic would you like to write about?",
-          hint       : "Click a topic card below, or type a number (1-10). Topics are ranked by seasonal timing urgency.",
-          placeholder: "e.g. 3 or paste the topic title...",
-          onSubmit   : runStep4,
-        },
+        status         : "waiting",
+        text           : null,
+        recommendation : res.recommendation,
+        lastBlog       : res.lastBlog,
+        festival       : res.festival,
+        isFirstBlog    : res.isFirstBlog,
+        targetMonth    : res.targetMonth,
+        canRetry       : false,
+        gate           : { type: "topic-recommendation" },
       });
     } catch (e) {
       patchStep(2, { status: "error", error: e.message, canRetry: true });
     }
-  }, [callSEO, patchStep, runStep4]);
+  }, [patchStep]);
 
 
   // ── Step 1 ───────────────────────────────────────────────────
@@ -705,16 +715,16 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   }, [callSEO, patchStep]);
 
   // ── Reactive Chain ───────────────────────────────────────────
-  const runStep3Ref = useRef(runStep3);
+  const runStep2RecommendRef = useRef(runStep2Recommend);
   const runStep7Ref = useRef(runStep7);
   const runStep8Ref = useRef(runStep8);
-  useEffect(() => { runStep3Ref.current = runStep3; }, [runStep3]);
+  useEffect(() => { runStep2RecommendRef.current = runStep2Recommend; }, [runStep2Recommend]);
   useEffect(() => { runStep7Ref.current = runStep7; }, [runStep7]);
   useEffect(() => { runStep8Ref.current = runStep8; }, [runStep8]);
 
   useEffect(() => {
     if (phase !== "running") return;
-    if (stepData[1]?.status === "done" && !stepData[2]) runStep3Ref.current();
+    if (stepData[1]?.status === "done" && !stepData[2]) runStep2RecommendRef.current();
     if (stepData[5]?.status === "done" && !stepData[6]) runStep7Ref.current();
     if (stepData[6]?.status === "done" && !stepData[7]) runStep8Ref.current();
   }, [phase, stepData]);
@@ -727,7 +737,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
     const handlers = {
       1: () => callSEO(PROMPT_STEP1(inp.url, inp, inp.scrapeContext), 4096, true),
-      2: () => callSEO(PROMPT_STEP3(stepInputsRef.current[2]?.nicheContext ?? "", new Date().toLocaleString("en-US", { month: "long" })), 4096, true),
+      2: () => runStep2RecommendRef.current(stepInputsRef.current[2]?.targetMonth),
       3: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       4: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
       5: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? ""), 8000, true),
@@ -747,7 +757,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   const handleGateSubmit = useCallback((stepId, value) => {
     const topic = stepInputsRef.current[3]?.topic ?? "";
     switch (stepId) {
-      case 2: runStep4(topic || value);        break;
+      case 2: {
+        // value = the recommended (or user-confirmed) topic title
+        const primaryKw = stepInputsRef.current[2]?.primaryKeyword ?? "";
+        runStep4(value, primaryKw);
+        break;
+      }
       case 3: runStep5(topic, value); break;
       case 4: runStep6(topic, value); break;
       default: console.warn("[Gate] No handler for step", stepId);
@@ -786,7 +801,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   async function resumeWorkflow(targetUrl, lastDone) {
     siteUrlRef.current = targetUrl;
     if (lastDone === 0) runWorkflow(targetUrl, brandContextRef.current);
-    else if (lastDone === 1) runStep3();
+    else if (lastDone === 1) runStep2RecommendRef.current();
     else if (lastDone === 5) runStep7();
     else if (lastDone === 6) runStep8();
   }
@@ -880,5 +895,6 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     internalData,
     isGeneratingVariations,
     generateVariations,
+    regenerateTopicRecommendation: runStep2Recommend,
   };
 }

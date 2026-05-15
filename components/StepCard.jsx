@@ -10,8 +10,9 @@ import LoadingIndicator from "./LoadingIndicator";
 import GateInput from "./GateInput";
 import SerpInsights from "./SerpInsights";
 import KeywordGrid from "./KeywordGrid";
+import TopicRecommendation from "./TopicRecommendation";
 
-export default function StepCard({ step, data, onRetry, onGateSubmit }) {
+export default function StepCard({ step, data, onRetry, onGateSubmit, onRegenerateRecommendation }) {
   const [collapsed, setCollapsed] = useState(false);
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -173,13 +174,23 @@ export default function StepCard({ step, data, onRetry, onGateSubmit }) {
             </div>
           )}
 
-          {step.id === 3 && data.text ? (
+          {step.id === 2 && data.recommendation ? (
+            <TopicRecommendation
+              recommendation={data.recommendation}
+              lastBlog={data.lastBlog}
+              festival={data.festival}
+              isFirstBlog={data.isFirstBlog}
+              targetMonth={data.targetMonth}
+              onUseThisTopic={(topicTitle) => onGateSubmit(step.id, topicTitle)}
+              onRegenerate={onRegenerateRecommendation}
+            />
+          ) : step.id === 3 && data.text ? (
             <KeywordGrid text={data.text} />
           ) : (
             data.text && <MarkdownContent text={data.text} />
           )}
           {data.serpData && <SerpInsights data={data.serpData} />}
-          {data.gate && (
+          {data.gate && step.id !== 2 && (
             <div className="sc-gate-wrap">
               <GateInput gate={data.gate} stepId={step.id} onSubmit={onGateSubmit} />
             </div>

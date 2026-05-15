@@ -30,6 +30,7 @@ export default function Page() {
     internalData,
     generateVariations,
     isGeneratingVariations,
+    regenerateTopicRecommendation,
   } = useSEOWorkflow();
 
   return (
@@ -132,6 +133,7 @@ export default function Page() {
                   data={stepData[s.id]}
                   onRetry={retryStep}
                   onGateSubmit={handleGateSubmit}
+                  onRegenerateRecommendation={s.id === 2 ? regenerateTopicRecommendation : undefined}
                 />
               ))}
 
