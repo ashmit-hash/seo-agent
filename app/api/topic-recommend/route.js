@@ -251,8 +251,79 @@ async function callGeminiForJSON(prompt, apiKey) {
 }
 
 
+// ─── Date helpers ─────────────────────────────────────────────────
+function getTodayIST() {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
+
+function getTodayISTString() {
+  const d = getTodayIST();
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+}
+
+/**
+ * Estimate if a festival is still upcoming given today's date.
+ * Uses the festival's date string (e.g. "Second Sunday of May", "January 14", "May (varies)")
+ * Returns true if the festival MIGHT still be upcoming (conservative — keep if unsure).
+ */
+function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
+  const year  = todayIST.getFullYear();
+  const todayDay = todayIST.getDate();
+  const todayMonth = todayIST.getMonth(); // 0-indexed
+
+  const MONTH_INDEX = {
+    January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+    July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
+  };
+  const targetMonthIdx = MONTH_INDEX[targetMonthName] ?? -1;
+
+  // If target month is in the future → all festivals are upcoming
+  if (targetMonthIdx > todayMonth) return true;
+  // If target month is in the past → all festivals have passed
+  if (targetMonthIdx < todayMonth) return false;
+
+  // Same month — check approximate day
+  const dateStr = festivalDate || "";
+
+  // Pattern: "January 14", "February 14", etc. — fixed date
+  const fixedMatch = dateStr.match(/\b(\d{1,2})\b/);
+  if (fixedMatch) {
+    const day = parseInt(fixedMatch[1]);
+    return day >= todayDay;
+  }
+
+  // Pattern: "Second Sunday of May", "Third Sunday of June" etc.
+  const nthDayMatch = dateStr.match(/\b(First|Second|Third|Fourth|Last)\s+(Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday)/i);
+  if (nthDayMatch) {
+    const ordinal = { first: 1, second: 2, third: 3, fourth: 4, last: -1 }[nthDayMatch[1].toLowerCase()] || 2;
+    const dayName = nthDayMatch[2];
+    const DAY_MAP = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
+    const targetDay = DAY_MAP[dayName] ?? 0;
+    // Find nth occurrence in the target month
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, targetMonthIdx, d);
+      if (dt.getMonth() !== targetMonthIdx) break;
+      if (dt.getDay() === targetDay) {
+        count++;
+        if (count === ordinal || ordinal === -1) {
+          return d >= todayDay; // upcoming if the computed day >= today
+        }
+      }
+    }
+  }
+
+  // Pattern contains "full moon" — hard to predict exactly; if we're past ~15th assume passed
+  if (/full moon/i.test(dateStr)) {
+    return todayDay <= 14;
+  }
+
+  // Pattern: "varies", "April or May", etc. — uncertain; keep it but mark as variable
+  return true;
+}
+
 // ─── Build Recommendation Prompt ─────────────────────────────────
-function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth }) {
+function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString }) {
   const lastBlogSection = isFirstBlog
     ? `LAST PUBLISHED BLOG: None found — this appears to be a new store or a brand that has not started blogging yet. Base recommendation on niche + festival only.`
     : `LAST PUBLISHED BLOG:
@@ -263,15 +334,19 @@ Summary: ${lastBlog.summary || "(no summary available — infer from title)"}`;
 
   const festivalSection =
     festivals.length > 0
-      ? `UPCOMING FESTIVALS / MOMENTS IN ${targetMonth.toUpperCase()}:
+      ? `UPCOMING FESTIVALS / MOMENTS IN ${targetMonth.toUpperCase()} (that have NOT yet passed as of today):
 ${festivals.map(f => `- ${f.name} (${f.date})
   Significance: ${f.significance}
   D2C content angles: ${f.d2cAngles.join(" | ")}`).join("\n\n")}`
-      : `FESTIVALS IN ${targetMonth.toUpperCase()}: No major Indian festivals in this month. Base recommendation on niche + evergreen commercial intent.`;
+      : `FESTIVALS IN ${targetMonth.toUpperCase()}: No upcoming festivals remain in this month (all have already passed, or there are none). Base the recommendation on evergreen niche content or a commercial intent angle instead. Set festivalReference to null.`;
 
   const auditSnippet = (brandAudit || "").slice(0, 600);
 
   return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic.
+
+TODAY'S DATE: ${todayString}
+
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.
 
 ---
 BRAND:
@@ -289,7 +364,7 @@ TARGET PUBLISH MONTH: ${targetMonth}
 INSTRUCTIONS:
 Recommend exactly ONE blog topic that:
 1. Builds on or naturally complements the last blog (different angle, not a rehash) — or is the best first post if no blog exists
-2. Ties to a festival or commercial moment in ${targetMonth} IF that festival is relevant to this niche (skip if not relevant)
+2. Ties to a festival or commercial moment still UPCOMING in ${targetMonth} (after ${todayString}) IF relevant to this niche. If no upcoming festival is relevant, skip the festival angle entirely.
 3. Serves commercial intent — drives traffic toward the brand's product/collection pages
 4. Has real search demand in India (the kind of query a real person types into Google)
 
@@ -299,7 +374,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
   "primaryKeyword": "The main SEO keyword phrase people search for (2-5 words, India-relevant)",
   "reasoning": {
     "continuityFromLastBlog": "Why this is the right follow-up to the last blog, or why it is the ideal first post",
-    "festivalAngle": "Which festival this ties to and exactly how it connects to the niche — or 'No festival angle this month — recommendation is based on niche and commercial evergreen intent'",
+    "festivalAngle": "Which upcoming festival this ties to and exactly how — OR 'No upcoming festival this month — recommendation is based on evergreen niche and commercial intent' if none apply",
     "commercialIntent": "How this specific blog drives buyers to the brand's products or collections — be concrete",
     "searchIntent": "What Indian users are typing into Google that this blog answers — include 2-3 example search queries"
   },
@@ -308,7 +383,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
     "publishedAt": "${isFirstBlog ? "N/A" : (lastBlog?.publishedAt || "recent")}",
     "url": "${isFirstBlog ? "" : (lastBlog?.url || "")}"
   },
-  "festivalReference": ${festivals.length > 0 ? '{"name": "festival name that this ties to", "date": "date of festival", "significance": "one sentence on why this festival is relevant to this niche"}' : "null"},
+  "festivalReference": ${festivals.length > 0 ? '{"name": "festival name that is still upcoming", "date": "date of festival", "significance": "one sentence on why this festival is relevant to this niche"} or null if no upcoming festival applies' : "null"},
   "verdict": "One to two sentences starting with: This topic is a strong choice because..."
 }`;
 }
@@ -322,7 +397,12 @@ export async function POST(req) {
     }
 
     const resolvedMonth = targetMonth || getCurrentMonthIST();
-    const festivals = getFestivalsForMonth(resolvedMonth);
+    const todayIST    = getTodayIST();
+    const todayString = getTodayISTString();
+
+    // Filter out festivals that have already passed this month
+    const allFestivals     = getFestivalsForMonth(resolvedMonth);
+    const festivals        = allFestivals.filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST));
 
     // ── Detect last blog (non-fatal — fallback to isFirstBlog) ───
     let lastBlog = null;
@@ -350,6 +430,7 @@ export async function POST(req) {
       isFirstBlog,
       festivals,
       targetMonth: resolvedMonth,
+      todayString,
     });
 
     const rawText = await callGeminiForJSON(prompt, apiKey);
