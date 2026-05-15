@@ -261,7 +261,7 @@ export default function ExportActions({ stepData, siteUrl, onReset }) {
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
         doc.setTextColor(...colors.MUTED);
-        const summaryText = "Based on multi-channel parsing of your brand semantic profile and current competitor gaps, your topical authority potential is high. Immediate focus on Gaps in Step 3 is required.";
+        const summaryText = "Based on multi-channel parsing of your brand semantic profile and topical authority signals, your content growth potential is high. Immediate focus on Keyword Research gaps is recommended.";
         doc.text(doc.splitTextToSize(summaryText, maxW - 55), M + 35, 48);
 
         y = 85;
@@ -274,7 +274,7 @@ export default function ExportActions({ stepData, siteUrl, onReset }) {
         doc.line(M, y + 3, M + 15, y + 3);
         y += 12;
 
-        const serp = stepData[4]?.serpData;
+        const serp = stepData[3]?.serpData;
         if (serp?.organic) {
           // Sleek minimalist table
           doc.setFont("helvetica", "bold");

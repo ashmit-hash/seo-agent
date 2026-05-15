@@ -14,7 +14,6 @@ import {
 
 const FEATURES = [
   "Live Brand Scraping",
-  "Competitor Research",
   "Audit Recommendations",
   "10 Topic Ideas",
   "Keyword Research",
@@ -98,8 +97,8 @@ export default function HeroSection({
       </h1>
 
       <p className="hero-sub">
-        Enter your website URL. Our AI agent analyzes your brand, researches competitors,
-        generates topics, performs keyword research, and writes a complete 1800–2500 word
+        Enter your website URL. Our AI agent analyzes your brand, generates seasonal topic ideas,
+        performs keyword research, and writes a complete 1800–2500 word
         blog post with live web search at every step.
       </p>
 

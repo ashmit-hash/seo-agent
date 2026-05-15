@@ -192,7 +192,7 @@ export default function TopicGrid({ text }) {
             <span>HOW THEY ARE WRITING (YOU MUST COPY THIS)</span>
           </div>
           <div className="tg-writing-body">
-            <p className="tg-writing-label">Structure competitors use:</p>
+            <p className="tg-writing-label">Proven content structure:</p>
             <ol className="tg-writing-steps">
               {writingSection.steps.map((step, i) => (
                 <li key={i} className="tg-writing-step">
