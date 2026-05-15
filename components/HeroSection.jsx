@@ -15,7 +15,7 @@ import {
 const FEATURES = [
   "Live Brand Scraping",
   "Audit Recommendations",
-  "10 Topic Ideas",
+  "Smart Topic Recommendation",
   "Keyword Research",
   "Full Blog Post",
   "SEO Meta Tags",
@@ -97,9 +97,9 @@ export default function HeroSection({
       </h1>
 
       <p className="hero-sub">
-        Enter your website URL. Our AI agent analyzes your brand, generates seasonal topic ideas,
-        performs keyword research, and writes a complete 1800–2500 word
-        blog post with live web search at every step.
+        Enter your website URL. Our AI agent analyzes your brand, detects your last published blog,
+        recommends the single best topic for this month based on festivals and content continuity,
+        then writes a complete 1800–2500 word blog post with live web search at every step.
       </p>
 
       {/* Provider selector */}
