@@ -180,6 +180,103 @@ async function tryBlogIndex(siteUrl) {
   return null;
 }
 
+// ─── Product/Collection Scraper ───────────────────────────────────
+/**
+ * Scrape actual product names from the brand's website.
+ * Tries common e-commerce paths to extract real product names.
+ * Returns a list of product/category names found on the site.
+ */
+async function scrapeActualProducts(siteUrl) {
+  const base = siteUrl.replace(/\/$/, "");
+  const pathsToTry = [
+    "/collections/all",
+    "/shop",
+    "/products",
+    "/store",
+    "/collections",
+    "/category/all",
+    "/categories",
+    "/",
+  ];
+
+  const productNames = new Set();
+
+  for (const path of pathsToTry) {
+    try {
+      const res = await fetch(`${base}${path}`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
+      const $ = cheerio.load(html);
+      $("script, style, noscript, nav, footer, header").remove();
+
+      // Shopify / WooCommerce / generic product cards
+      const selectors = [
+        ".product-card__title",
+        ".product-title",
+        ".product__title",
+        ".product-name",
+        ".woocommerce-loop-product__title",
+        "h2.title",
+        "h3.title",
+        ".card__heading",
+        ".grid-product__title",
+        "[class*='product'] h2",
+        "[class*='product'] h3",
+        "[class*='product'] h4",
+        ".collection-grid__item h2",
+        ".collection-grid__item h3",
+        // JSON-LD structured data
+      ];
+
+      for (const sel of selectors) {
+        $(sel).each((_, el) => {
+          const name = $(el).text().trim();
+          if (name.length > 2 && name.length < 120) productNames.add(name);
+        });
+      }
+
+      // Also look for JSON-LD product data
+      $("script[type='application/ld+json']").each((_, el) => {
+        try {
+          const json = JSON.parse($(el).html() || "{}");
+          const items = Array.isArray(json) ? json : [json];
+          for (const item of items) {
+            if (item["@type"] === "Product" && item.name) productNames.add(item.name);
+            if (item["@type"] === "ItemList" && Array.isArray(item.itemListElement)) {
+              item.itemListElement.forEach(e => { if (e.name) productNames.add(e.name); });
+            }
+          }
+        } catch { /* skip malformed JSON-LD */ }
+      });
+
+      // Also try Shopify's products.json endpoint
+      if (path === "/collections/all" || path === "/") {
+        try {
+          const jsonRes = await fetch(`${base}/collections/all/products.json?limit=30`, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (jsonRes.ok) {
+            const jsonData = await jsonRes.json();
+            (jsonData.products || []).forEach(p => {
+              if (p.title) productNames.add(p.title);
+              // Also collect product types/tags
+              if (p.product_type) productNames.add(p.product_type);
+            });
+          }
+        } catch { /* no products.json */ }
+      }
+
+      if (productNames.size >= 5) break; // enough products found
+    } catch { /* try next path */ }
+  }
+
+  return [...productNames].slice(0, 40); // cap at 40 product names
+}
+
 // ─── Master Blog Detector ─────────────────────────────────────────
 async function detectLastBlog(siteUrl) {
   let domain = siteUrl;
@@ -323,7 +420,7 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST) {
 }
 
 // ─── Build Recommendation Prompt ─────────────────────────────────
-function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString }) {
+function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts }) {
   const lastBlogSection = isFirstBlog
     ? `LAST PUBLISHED BLOG: None found — this appears to be a new store or a brand that has not started blogging yet. Base recommendation on niche + festival only.`
     : `LAST PUBLISHED BLOG:
@@ -342,6 +439,13 @@ ${festivals.map(f => `- ${f.name} (${f.date})
 
   const auditSnippet = (brandAudit || "").slice(0, 600);
 
+  const productsSection = actualProducts && actualProducts.length > 0
+    ? `ACTUAL PRODUCTS ON THIS WEBSITE (scraped directly — these are the ONLY products that exist):
+${actualProducts.map(p => `• ${p}`).join("\n")}
+
+CRITICAL PRODUCT RULE: You MUST ONLY recommend blog topics about products and categories that are explicitly listed above. If the list above contains knee supports, compression socks, and back belts — write about THOSE products only. Do NOT invent, assume, or hallucinate any product that is not in this list. If you cannot find a relevant festival angle for these exact products, skip the festival and recommend an evergreen topic for the listed products instead.`
+    : `ACTUAL PRODUCTS: Could not be scraped automatically. Use the Brand Audit and Niche to infer products, but be conservative — only mention product types that are clearly implied by the brand niche.`;
+
   return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic.
 
 TODAY'S DATE: ${todayString}
@@ -353,6 +457,8 @@ BRAND:
 - Website: ${siteUrl}
 - Niche / Category: ${niche}
 - Brand Audit Highlights: ${auditSnippet || "(not available)"}
+
+${productsSection}
 
 ${lastBlogSection}
 
@@ -404,18 +510,29 @@ export async function POST(req) {
     const allFestivals     = getFestivalsForMonth(resolvedMonth);
     const festivals        = allFestivals.filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST));
 
-    // ── Detect last blog (non-fatal — fallback to isFirstBlog) ───
+    // ── Detect last blog + scrape products in parallel ───────────
     let lastBlog = null;
     let isFirstBlog = false;
-    try {
-      const detected = await detectLastBlog(siteUrl);
+    let actualProducts = [];
+
+    const [blogResult, productResult] = await Promise.allSettled([
+      detectLastBlog(siteUrl),
+      scrapeActualProducts(siteUrl),
+    ]);
+
+    if (blogResult.status === "fulfilled") {
+      const detected = blogResult.value;
       if (detected.isFirstBlog) {
         isFirstBlog = true;
       } else {
         lastBlog = detected;
       }
-    } catch {
+    } else {
       isFirstBlog = true; // graceful fallback
+    }
+
+    if (productResult.status === "fulfilled" && productResult.value.length > 0) {
+      actualProducts = productResult.value;
     }
 
     // ── Call Gemini for recommendation ───────────────────────────
@@ -431,6 +548,7 @@ export async function POST(req) {
       festivals,
       targetMonth: resolvedMonth,
       todayString,
+      actualProducts,
     });
 
     const rawText = await callGeminiForJSON(prompt, apiKey);
