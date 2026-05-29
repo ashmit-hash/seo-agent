@@ -16,7 +16,7 @@ export async function POST(req) {
 
     const response = await fetch(finalUrl, {
       signal: controller.signal,
-      cache: 'no-store', // Force Vercel/Next to not cache this fetch
+      cache: 'no-store',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -35,16 +35,16 @@ export async function POST(req) {
     const $ = cheerio.load(html);
 
     // Remove noisy elements to isolate purely semantic content
-    $('script, style, noscript, svg, iframe, nav, footer, header, aside').remove();
+    $('script[src], style, noscript, svg, iframe, nav, footer, header, aside').remove();
 
     const title = $('title').text().trim() || $('meta[property="og:title"]').attr('content')?.trim() || '';
     const description = $('meta[name="description"]').attr('content')?.trim() || $('meta[property="og:description"]').attr('content')?.trim() || '';
-    
+
     const h1 = $('h1').first().text().trim() || '';
     const h2s = $('h2').map((i, el) => $(el).text().trim()).get().filter(Boolean).slice(0, 5).join(' | ');
     const h3s = $('h3').map((i, el) => $(el).text().trim()).get().filter(Boolean).slice(0, 5).join(' | ');
 
-    // Intelligently extract actual main content (fallback to dense paragraph clusters if <main> is missing)
+    // Intelligently extract actual main content
     let mainText = $('main').text().replace(/\s+/g, ' ').trim();
     if (!mainText || mainText.length < 50) mainText = $('article').text().replace(/\s+/g, ' ').trim();
     if (!mainText || mainText.length < 50) {
@@ -55,6 +55,144 @@ export async function POST(req) {
     const robots = $('meta[name="robots"]').attr('content') || 'index, follow';
     const canonical = $('link[rel="canonical"]').attr('href') || '';
 
+    // ── Product extraction ─────────────────────────────────────────
+    // Returns structured { name, price } array — works for Alippo (Next.js),
+    // Shopify, WooCommerce, and any site with JSON-LD product schema.
+    const products = [];
+
+    // ── Method 1: Next.js __NEXT_DATA__ (Alippo and all Next.js stores) ──
+    // Next.js embeds ALL server-side props as JSON in this script tag — even
+    // before any JavaScript runs. This is the most reliable source for Alippo.
+    const rawNextData = $('script#__NEXT_DATA__').html();
+    if (rawNextData) {
+      try {
+        const nextData = JSON.parse(rawNextData);
+        const pageProps = nextData?.props?.pageProps ?? {};
+
+        // Walk common locations where Alippo / Next.js stores put product arrays
+        const candidates = [
+          pageProps.products,
+          pageProps.data?.products,
+          pageProps.categoryData?.products,
+          pageProps.collectionData?.products,
+          pageProps.items,
+          pageProps.initialProducts,
+          pageProps.productList,
+          pageProps.catalog,
+          nextData?.props?.initialState?.products,
+          nextData?.props?.initialState?.catalog,
+        ];
+
+        for (const arr of candidates) {
+          if (Array.isArray(arr) && arr.length > 0) {
+            arr.slice(0, 30).forEach(p => {
+              // Try every common field name Alippo / other platforms use
+              const name =
+                p.title || p.name || p.productName || p.product_name ||
+                p.displayName || p.heading || '';
+              const rawPrice =
+                p.price ?? p.sellingPrice ?? p.selling_price ??
+                p.mrp ?? p.salePrice ?? p.sale_price ??
+                p.variants?.[0]?.price ?? p.variant?.price ?? '';
+              const price = parseFloat(String(rawPrice).replace(/[^0-9.]/g, '')) || null;
+              if (name && name.length > 1 && name.length < 150) {
+                products.push({ name: name.trim(), price });
+              }
+            });
+            if (products.length > 0) break; // found products — stop searching
+          }
+        }
+      } catch { /* malformed JSON — skip */ }
+    }
+
+    // ── Method 2: JSON-LD Product / ItemList schema ───────────────
+    if (products.length === 0) {
+      $('script[type="application/ld+json"]').each((_, el) => {
+        try {
+          const json = JSON.parse($(el).html() || '{}');
+          const items = Array.isArray(json) ? json : [json];
+          for (const item of items) {
+            if (item['@type'] === 'Product' && item.name) {
+              const price = parseFloat(item.offers?.price || item.offers?.[0]?.price || '0') || null;
+              products.push({ name: item.name, price });
+            }
+            if (item['@type'] === 'ItemList' && Array.isArray(item.itemListElement)) {
+              item.itemListElement.forEach(e => {
+                const name = e.name || e.item?.name;
+                if (name) {
+                  const price = parseFloat(e.item?.offers?.price || '0') || null;
+                  products.push({ name, price });
+                }
+              });
+            }
+          }
+        } catch { /* skip malformed */ }
+      });
+    }
+
+    // ── Method 3: HTML price elements + nearby heading (generic fallback) ──
+    if (products.length === 0) {
+      $('[class*="price"], .price, .amount, [data-price]').each((_, el) => {
+        if (products.length >= 20) return;
+        const priceText = $(el).text().trim();
+        if (!/(?:₹|Rs\.?|\b\d{3,}\b)/.test(priceText)) return;
+        const price = parseFloat(priceText.replace(/[^0-9.]/g, '')) || null;
+        const card = $(el).closest('[class*="product"], [class*="card"], [class*="item"], article, li');
+        const name = card.find('h1,h2,h3,h4,[class*="title"],[class*="name"]').first().text().trim();
+        if (name && name.length > 2 && name.length < 120 && price) {
+          products.push({ name, price });
+        }
+      });
+    }
+
+    // ── Method 4: Alippo App Router — price-anchor text extraction ───────────
+    // Alippo uses Next.js App Router (no __NEXT_DATA__). Products and prices are
+    // rendered as plain text. We split by ₹ price markers and extract product
+    // names from the text immediately before each price.
+    if (products.length === 0) {
+      const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+      const segments = bodyText.split(/(₹[\d,]+)/);
+      const seen = new Set();
+      for (let i = 0; i + 1 < segments.length; i += 2) {
+        const before   = segments[i];
+        const priceRaw = segments[i + 1];
+        const price    = parseInt(priceRaw.replace(/[^\d]/g, ''), 10);
+        if (!price || price < 50) continue;
+        // Skip MRP prices — they come right after a "-38%MRP" separator text.
+        // Check the CURRENT `before` segment (not the next one).
+        const beforeTrimmed = before.trim();
+        const isMrpEntry =
+          /^[-–]\s*\d+\s*%\s*(?:off|mrp)/i.test(beforeTrimmed) ||
+          /\bmrp\s*$/i.test(beforeTrimmed);
+        if (isMrpEntry) continue;
+
+        let nameSrc = before
+          .replace(/\(\s*Pack of \d+\s*\)/gi, '')
+          .replace(/\d+\s*Options?/gi, '')
+          .replace(/\s*-\s*\d+\s*%\s*(?:OFF|MRP)?\s*$/i, '')
+          .replace(/\b(Filters?|Sort\s+By|Categories|Home|Shop|New|Sale|Explore\s+All|Bestsellers?|Trending|Featured|Free\s+Shipping|Cash\s+On\s+Delivery|Ships?\s+\w+)\b/gi, ' ')
+          .replace(/[^\w\s\-–:.'&()/]/g, ' ')
+          .replace(/\s+/g, ' ').trim();
+
+        // Strip nav preamble: split by sentence boundaries, take last sentence
+        const sentences = nameSrc.split(/\.+/).map(s => s.trim()).filter(Boolean);
+        if (sentences.length > 1) nameSrc = sentences[sentences.length - 1];
+        // Strip trailing lone digits (e.g. "4" from "Pack of 30)4")
+        nameSrc = nameSrc.replace(/\s+\d{1,2}\s*$/, '').trim();
+
+        const words = nameSrc.split(/\s+/).filter(w => w.length > 0);
+        if (words.length < 2) continue;
+        const productName = words.slice(-10).join(' ').trim();
+        if (productName.length < 5 || productName.length > 120) continue;
+        if (/^(HOME|SHOP|ABOUT|CONTACT|FILTER|SORT|CATEGOR|MRP|NEW|SALE|ALL|EXPLORE|BESTSELL|FEATURE|LEGAL|PRIVACY|RETURN|BULK)/i.test(productName)) continue;
+        if (!seen.has(productName)) {
+          seen.add(productName);
+          products.push({ name: productName, price });
+        }
+        if (products.length >= 25) break;
+      }
+    }
+
     return NextResponse.json({
       title,
       description,
@@ -63,10 +201,10 @@ export async function POST(req) {
       h3s,
       mainText,
       robots,
-      canonical
+      canonical,
+      products: products.slice(0, 30), // cap at 30
     });
   } catch (err) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
-

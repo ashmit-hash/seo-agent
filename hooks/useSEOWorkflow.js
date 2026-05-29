@@ -315,17 +315,22 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   const combined = ((scrapeContext || "") + " " + (auditText || "")).toLowerCase();
 
   const nichePatterns = [
-    // Jewellery — must be explicit, not just "gold" or "silver" in passing
-    { pattern: /jewel(?:ler)?y|jewellery brand|gold jewel|silver jewel|diamond jewel|pendant|necklace|bangles|earring/i, label: "jewellery" },
-    { pattern: /fashion|apparel|clothing|kurta|saree|ethnic wear|lehenga/i,       label: "fashion apparel" },
-    { pattern: /skincare|cosmetic|makeup|serum|moisturizer|face wash|beauty|sunscreen|spf|toner|cleanser|lip balm/i, label: "beauty skincare" },
+    // ── Check specific product categories FIRST (before generic terms) ──
+    // Tactical / military / outdoor — check BEFORE bags so "tactical backpack" doesn't bleed into "bags accessories"
+    { pattern: /tactical|military|army|combat|defence|defense|shooting|camo|camouflage|ops|soldier|paramilitary|force|ammo|firearm|holster|molle|airsoft|gun belt|duty belt/i, label: "tactical military gear" },
+    // Bags / accessories — check before jewellery because "gold clasp" / "silver buckle" on bags
+    // would otherwise trigger the jewellery pattern incorrectly.
+    { pattern: /handbag|hand bag|sling bag|shoulder bag|crossbody|clutch bag|tote bag|laptop bag|bag brand|bag collection|bag store|leather bag|canvas bag|wallet|purse brand/i, label: "bags accessories" },
+    { pattern: /footwear|shoe brand|sandal|sneaker|boot brand/i,                   label: "footwear" },
+    { pattern: /watch brand|timepiece|wrist watch/i,                               label: "watches" },
+    // Jewellery — requires explicit jewellery terms, not just metal colours
+    { pattern: /jewel(?:ler)?y|jewellery brand|jewellery store|diamond jewel|pendant|necklace|bangles|earring|ring.*gold|gold.*ring|kundan|meenakari|polki|mangalsutra/i, label: "jewellery" },
+    { pattern: /skincare|cosmetic|makeup|serum|moisturizer|face wash|beauty brand|sunscreen|spf|toner|cleanser|lip balm/i, label: "beauty skincare" },
+    { pattern: /kurta|saree|ethnic wear|lehenga|salwar|dupatta|fashion brand|apparel brand|clothing brand/i, label: "fashion apparel" },
     { pattern: /home decor|scented candle|diffuser|cushion cover|wall art|decor brand/i, label: "home decor" },
     { pattern: /tiffin|meal delivery|home food|dabba|lunch box service/i,          label: "tiffin food delivery" },
     { pattern: /food|snack|chocolate|mithai|health food|organic food/i,            label: "food snacks" },
     { pattern: /kids|children|baby|toy|school supply|toddler|infant|nursery|board game|puzzle/i, label: "kids baby products" },
-    { pattern: /footwear|shoe brand|sandal|sneaker/i,                              label: "footwear" },
-    { pattern: /watch brand|timepiece/i,                                           label: "watches" },
-    { pattern: /handbag|wallet|purse|tote|leather bag/i,                           label: "bags accessories" },
     { pattern: /wellness|supplement|vitamin|protein|ayurved|healthcare|medicine|pharmacy|fitness|nutrition|herbal/i, label: "health wellness" },
     { pattern: /lifestyle|gifting|gift brand|curated gift|artisan|handcraft/i,     label: "lifestyle gifting" },
     { pattern: /stationery|notebook|pen|planner|journal/i,                         label: "stationery" },
@@ -486,52 +491,202 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
       const siteUrl     = siteUrlRef.current ?? "";
 
-      // ── Extract price range from scraped data (PRICE LOCK) ────
-      const priceMatches = (scrapeCtx + " " + auditText).match(/₹\s*[\d,]+(?:\s*[-–to]+\s*₹?\s*[\d,]+)?/g) || [];
-      const numericPrices = priceMatches
-        .map(p => parseInt(p.replace(/[₹,\s]/g, "").match(/\d+/)?.[0] || "0"))
-        .filter(n => n > 0);
-      const maxPrice = numericPrices.length ? Math.max(...numericPrices) : null;
-      const minPrice = numericPrices.length ? Math.min(...numericPrices) : null;
-      const priceRangeLine = maxPrice
-        ? `PRICE RANGE OF THIS BRAND: ₹${minPrice} – ₹${maxPrice} (MAX ₹${maxPrice}). DO NOT use any price examples above ₹${maxPrice} in the blog.`
-        : "";
-
-      // ── Scrape product catalog from store ────────────────────
+      // ── Fetch real product catalog with prices ────────────────
+      // Priority order: Alippo (__NEXT_DATA__) → Shopify → WooCommerce → HTML scrape
       let productContext = "";
+      const allExtractedPrices = [];
+
+      // Helper — converts a [{name, price}] array to a formatted bullet list
+      function formatProductList(prods, source) {
+        const lines = prods
+          .filter(p => p.name && p.name.length > 1)
+          .slice(0, 25)
+          .map(p => {
+            if (p.price && p.price > 0) {
+              allExtractedPrices.push(p.price);
+              return `• ${p.name} — ₹${Math.round(p.price).toLocaleString("en-IN")}`;
+            }
+            return `• ${p.name}`;
+          });
+        if (lines.length === 0) return "";
+        return `REAL PRODUCTS FROM THIS STORE — USE THESE EXACT NAMES AND PRICES IN THE BLOG:\n${lines.join("\n")}\n(Source: ${source})`;
+      }
+
       try {
         const baseUrl = siteUrl.replace(/\/+$/, "");
-        const productPaths = ["/collections/all", "/shop", "/products", "/collections"];
-        for (const path of productPaths) {
-          const prodRes = await fetch("/api/scrape", {
+
+        // ── Strategy 1: Alippo / Next.js __NEXT_DATA__ ───────────
+        // Alippo stores are Next.js apps. Next.js embeds ALL server-side page
+        // props as JSON in a <script id="__NEXT_DATA__"> tag — this includes
+        // Alippo App Router stores render products + prices in HTML on the
+        // "explore-all" or "bestsellers" pages. Try these first.
+        const alippoPaths = [
+          "/category-view/explore-all",  // ALL products with prices (most reliable)
+          "/category-view/bestsellers",  // bestsellers
+          "/category-view/new-arrivals", // new arrivals
+          "/collection-view/explore-all",
+          "/collection-view/all",
+          "/category-view",              // category listing (has subcategory slugs)
+          "/collection-view",
+          "/",                           // homepage fallback
+        ];
+
+        for (const path of alippoPaths) {
+          if (productContext) break;
+          const scrapeRes = await fetch("/api/scrape", {
             method : "POST",
             headers: { "Content-Type": "application/json" },
             body   : JSON.stringify({ url: baseUrl + path }),
           }).then(r => r.json()).catch(() => null);
 
-          if (prodRes && !prodRes.error && prodRes.mainText && prodRes.mainText.length > 100) {
-            productContext = "REAL PRODUCTS ON THIS WEBSITE (from " + baseUrl + path + "):\n" + prodRes.mainText.slice(0, 1500);
-            break;
+          if (scrapeRes?.products && scrapeRes.products.length > 0) {
+            const built = formatProductList(scrapeRes.products, `Alippo ${path}`);
+            if (built) { productContext = built; break; }
+          }
+          // Also check raw mainText for ₹ prices (rendered HTML fallback)
+          if (!productContext && scrapeRes?.mainText) {
+            const priceHits = (scrapeRes.mainText.match(/₹[\d,]+/g) || []).length;
+            if (priceHits >= 3) {
+              // Has prices — use mainText directly
+              (scrapeRes.mainText.match(/(?:₹)\s*[\d,]+/g) || []).forEach(p => {
+                const n = parseInt(p.replace(/[^\d]/g, ""));
+                if (n > 50) allExtractedPrices.push(n);
+              });
+              productContext = `REAL PRODUCTS ON THIS WEBSITE (from ${baseUrl}${path}):\n${scrapeRes.mainText.slice(0, 2500)}`;
+              break;
+            }
           }
         }
-        // Fallback: extract nav categories from homepage scrape
+
+        // ── Strategy 2: Alippo PayloadCMS products API ───────────
+        // Alippo uses PayloadCMS at cms.alippo.com — try their products collection
+        if (!productContext) {
+          try {
+            let domain = baseUrl;
+            try { domain = new URL(baseUrl).hostname; } catch { /* keep as-is */ }
+            for (const cmsBase of ["https://cms.alippo.com", "https://admin.alippo.com"]) {
+              const cmsRes = await fetch(
+                `${cmsBase}/api/products?where[websiteDomain][equals]=${domain}&limit=25&depth=1`,
+                { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(5000) }
+              ).catch(() => null);
+              if (!cmsRes || !cmsRes.ok) continue;
+              const cmsData = await cmsRes.json();
+              const docs = cmsData.docs || [];
+              if (docs.length > 0) {
+                const built = formatProductList(docs.map(p => ({
+                  name : p.title || p.name || p.productName || "",
+                  price: parseFloat(p.price || p.sellingPrice || p.mrp || "0") || null,
+                })), "Alippo CMS");
+                if (built) { productContext = built; break; }
+              }
+            }
+          } catch (_) { /* CMS not reachable */ }
+        }
+
+        // ── Strategy 3: Shopify products.json ────────────────────
+        if (!productContext) {
+          try {
+            const shopRes = await fetch("/api/scrape", {
+              method : "POST",
+              headers: { "Content-Type": "application/json" },
+              body   : JSON.stringify({ url: baseUrl + "/products.json?limit=30" }),
+            }).then(r => r.json()).catch(() => null);
+            // products.json returns raw JSON text — parse it from mainText
+            if (shopRes?.mainText) {
+              try {
+                const shopData = JSON.parse(shopRes.mainText.replace(/\.\.\.$/,""));
+                const prods = (shopData.products || []).slice(0, 25);
+                if (prods.length > 0) {
+                  const built = formatProductList(prods.map(p => ({
+                    name : p.title || "",
+                    price: parseFloat(p.variants?.[0]?.price ?? "0") || null,
+                  })), "Shopify");
+                  if (built) productContext = built;
+                }
+              } catch (_) { /* not JSON */ }
+            }
+          } catch (_) { /* not Shopify */ }
+        }
+
+        // ── Strategy 4: WooCommerce REST API ─────────────────────
+        if (!productContext) {
+          try {
+            const wooScrape = await fetch("/api/scrape", {
+              method : "POST",
+              headers: { "Content-Type": "application/json" },
+              body   : JSON.stringify({ url: baseUrl + "/wp-json/wc/v3/products?per_page=20&status=publish" }),
+            }).then(r => r.json()).catch(() => null);
+            if (wooScrape?.mainText) {
+              try {
+                const wooProds = JSON.parse(wooScrape.mainText.replace(/\.\.\.$/,""));
+                if (Array.isArray(wooProds) && wooProds.length > 0) {
+                  const built = formatProductList(wooProds.map(p => ({
+                    name : p.name || "",
+                    price: parseFloat(p.price || p.regular_price || "0") || null,
+                  })), "WooCommerce");
+                  if (built) productContext = built;
+                }
+              } catch (_) { /* not JSON */ }
+            }
+          } catch (_) { /* not WooCommerce */ }
+        }
+
+        // ── Strategy 5: Generic page scrape with __NEXT_DATA__ ───
+        // Try remaining common e-commerce paths via our scrape API
+        if (!productContext) {
+          for (const path of ["/shop", "/products", "/collections/all", "/collections"]) {
+            const prodRes = await fetch("/api/scrape", {
+              method : "POST",
+              headers: { "Content-Type": "application/json" },
+              body   : JSON.stringify({ url: baseUrl + path }),
+            }).then(r => r.json()).catch(() => null);
+
+            if (prodRes?.products?.length > 0) {
+              const built = formatProductList(prodRes.products, path);
+              if (built) { productContext = built; break; }
+            }
+            // Fallback to mainText raw content
+            if (prodRes?.mainText && prodRes.mainText.length > 100) {
+              (prodRes.mainText.match(/(?:₹|Rs\.?)\s*[\d,]+(?:\.\d{2})?/g) || []).forEach(p => {
+                const n = parseInt(p.replace(/[^\d]/g, ""));
+                if (n > 50) allExtractedPrices.push(n);
+              });
+              productContext = `REAL PRODUCTS ON THIS WEBSITE (from ${baseUrl}${path}):\n${prodRes.mainText.slice(0, 2000)}`;
+              break;
+            }
+          }
+        }
+
+        // ── Last resort: use heading categories from homepage scrape ──
         if (!productContext && scrapeCtx) {
-          const h2s = (scrapeCtx.match(/H2s: (.+)/) || [])[1] ?? "";
-          const h3s = (scrapeCtx.match(/H3s: (.+)/) || [])[1] ?? "";
+          const h2s = (scrapeCtx.match(/H2s:\s*(.+)/) || [])[1] ?? "";
+          const h3s = (scrapeCtx.match(/H3s:\s*(.+)/) || [])[1] ?? "";
           if (h2s || h3s) {
-            productContext = "PRODUCT CATEGORIES FROM WEBSITE:\n" + h2s + "\n" + h3s;
+            productContext = `PRODUCT CATEGORIES FROM WEBSITE:\n${[h2s, h3s].filter(Boolean).join("\n")}`;
           }
         }
       } catch (prodErr) {
-        console.log("[Products] Scrape skipped:", prodErr.message);
+        console.log("[Products] Fetch skipped:", prodErr.message);
       }
+
+      // ── Build price range from ALL sources ────────────────────
+      const priceMatches = (scrapeCtx + " " + auditText).match(/₹\s*[\d,]+(?:\s*[-–to]+\s*₹?\s*[\d,]+)?/g) || [];
+      const numericPrices = [
+        ...priceMatches.map(p => parseInt(p.replace(/[₹,\s]/g, "").match(/\d+/)?.[0] || "0")),
+        ...allExtractedPrices,
+      ].filter(n => n > 50);
+      const maxPrice = numericPrices.length ? Math.max(...numericPrices) : null;
+      const minPrice = numericPrices.length ? Math.min(...numericPrices) : null;
+      const priceRangeLine = maxPrice
+        ? `PRICE RANGE OF THIS BRAND: ₹${minPrice?.toLocaleString("en-IN")} – ₹${maxPrice.toLocaleString("en-IN")} (MAX ₹${maxPrice.toLocaleString("en-IN")}). NEVER write any price above ₹${maxPrice.toLocaleString("en-IN")} in the blog.`
+        : "";
 
       const websiteContext = [
         priceRangeLine,
-        scrapeCtx ? scrapeCtx.slice(0, 400) : "",
-        auditText ? auditText.slice(0, 200) : "",
-        productContext ? productContext.slice(0, 1000) : "",
-      ].filter(Boolean).join("\n").trim();
+        scrapeCtx ? scrapeCtx.slice(0, 500) : "",
+        auditText ? auditText.slice(0, 300) : "",
+        productContext ? productContext.slice(0, 2500) : "",
+      ].filter(Boolean).join("\n\n").trim();
       stepInputsRef.current[5].websiteContext = websiteContext;
       stepInputsRef.current[5].productContext = productContext;
 
@@ -539,10 +694,35 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       // ── Auto-format into paragraphs before showing to user ───
       let finalBlogText = d6raw.text;
+
+      // ── Post-processing scrubs (before format step) ───────────
+      // 1. Strip "Alippo" anywhere — it's the platform name, not the client brand
+      finalBlogText = finalBlogText.replace(/\bAlippo\b/gi, (match) => {
+        // Try to extract the brand name from scrapeCtx title or auditText
+        const brandMatch =
+          scrapeCtx.match(/Title:\s*([^\n|–\-]+)/i)?.[1]?.split(/[\|\-–]/)[0]?.trim() ||
+          auditText.match(/Brand(?:\s*Name)?:\s*([^\n]+)/i)?.[1]?.trim() ||
+          "our brand";
+        return brandMatch;
+      });
+
+      // 2. Strip prompt-artifact H2/H3 headings that leaked into output
+      // These look like: "## Modified Keyword Integration" or "## SEO Section"
+      const ARTIFACT_HEADING_PATTERN = /^#{1,3}\s+(?:Modified\s+Keyword\s+Integration|Keyword\s+Integration|SEO\s+Section|Step\s+\d+|Section\s+\d+|Prompt\s+\w+|Blueprint\s+\w+)\b.*/gim;
+      finalBlogText = finalBlogText.replace(ARTIFACT_HEADING_PATTERN, "")
+        .replace(/\n{3,}/g, "\n\n"); // collapse extra blank lines left behind
       try {
-        const d6fmt = await callSEO(PROMPT_STEP6_FORMAT(d6raw.text), 8000);
+        const d6fmt = await callSEO(PROMPT_STEP6_FORMAT(finalBlogText), 8000);
         if (d6fmt?.text && d6fmt.text.length > 200) {
           finalBlogText = d6fmt.text;
+          // Re-apply scrubs — format AI can re-introduce artifacts
+          finalBlogText = finalBlogText
+            .replace(/\bAlippo\b/gi, () =>
+              scrapeCtx.match(/Title:\s*([^\n|–\-]+)/i)?.[1]?.split(/[\|\-–]/)[0]?.trim() ||
+              auditText.match(/Brand(?:\s*Name)?:\s*([^\n]+)/i)?.[1]?.trim() || "our brand"
+            )
+            .replace(ARTIFACT_HEADING_PATTERN, "")
+            .replace(/\n{3,}/g, "\n\n");
         }
       } catch (fmtErr) {
         console.log("[Format] Paragraph formatting skipped:", fmtErr.message);
@@ -638,6 +818,10 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
   // ── Step 2 — Smart Topic Recommendation ─────────────────────
   const runStep2Recommend = useCallback(async (targetMonth) => {
+    // Capture the previously recommended topic BEFORE resetting step data
+    // so we can tell the API "don't suggest this again"
+    const previousTopic = stepDataRef.current[2]?.recommendation?.recommendedTopic ?? "";
+
     stepInputsRef.current[2] = {};
     patchStep(2, { status: "loading", recommendation: null, text: null });
     try {
@@ -654,13 +838,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       const res = await fetch("/api/topic-recommend", {
         method : "POST",
+        cache  : "no-store",
         headers: { "Content-Type": "application/json" },
         body   : JSON.stringify({
           siteUrl,
           niche,
-          brandAudit  : auditText.slice(0, 800),
-          scrapeContext: scrapeCtx.slice(0, 400),
+          brandAudit  : auditText.slice(0, 1200),
+          scrapeContext: scrapeCtx.slice(0, 1500),
           targetMonth : resolvedMonth,
+          _salt       : Math.random().toString(36).substring(2, 9),
+          // Tell the API which topic was previously shown — forces a fresh suggestion
+          avoidTopic  : previousTopic || "",
         }),
       }).then(r => r.json());
 

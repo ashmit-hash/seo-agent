@@ -490,99 +490,240 @@ async function tryBlogIndex(siteUrl) {
 
 // ─── Product/Collection Scraper ───────────────────────────────────
 /**
- * Scrape actual product names from the brand's website.
- * Tries common e-commerce paths to extract real product names.
- * Returns a list of product/category names found on the site.
+ * Scrape REAL products (with confirmed inventory) from the brand's website.
+ * Returns objects: { name: string, price: number|null, confirmed: boolean }
+ *
+ * "confirmed" = true when we have a price or found the item in a structured
+ * product API (not just a nav category name). Only confirmed products are
+ * safe to use as blog topics — empty categories must be excluded.
  */
 async function scrapeActualProducts(siteUrl) {
   const base = siteUrl.replace(/\/$/, "");
-  const pathsToTry = [
-    "/collections/all",
-    "/shop",
-    "/products",
-    "/store",
-    "/collections",
-    "/category/all",
-    "/categories",
-    "/",
+
+  // ── Helper: extract products from rendered HTML using ₹ price anchors ──────
+  // Works for Alippo App Router sites where product names + prices are
+  // rendered as plain text in the HTML (no JSON blob, no __NEXT_DATA__).
+  // Strategy: split text by ₹ price markers, then grab the text immediately
+  // BEFORE each price (cleaned of filler words) as the product name.
+  function extractFromRenderedHtml(html) {
+    const $ = cheerio.load(html);
+    $("script, style, noscript, nav, footer, header, aside").remove();
+    const text = $("body").text().replace(/\s+/g, " ").trim();
+
+    const products = [];
+    // Split on ₹ price occurrences — text before each ₹ has the product name
+    const segments = text.split(/(₹[\d,]+)/);
+
+    for (let i = 0; i + 1 < segments.length; i += 2) {
+      const before  = segments[i];
+      const priceRaw = segments[i + 1]; // e.g. "₹18,150"
+      const price    = parseInt(priceRaw.replace(/[^\d]/g, ""), 10);
+      if (!price || price < 50) continue;
+
+      // Skip MRP prices — they come right after a "-38%MRP" separator text.
+      // Check the CURRENT `before` segment (not the next one) to detect separators.
+      // Pattern: segment looks like "-38%MRP" or ends with "MRP"
+      const beforeTrimmed = before.trim();
+      const isMrpEntry =
+        /^[-–]\s*\d+\s*%\s*(?:off|mrp)/i.test(beforeTrimmed) ||
+        /\bmrp\s*$/i.test(beforeTrimmed);
+      if (isMrpEntry) continue;
+
+      // Clean the text before the price to extract the product name
+      let nameSrc = before
+        .replace(/\(\s*Pack of \d+\s*\)/gi, "")   // remove "(Pack of 30)"
+        .replace(/\d+\s*Options?/gi, "")            // remove "4 Options"
+        .replace(/\s*-\s*\d+\s*%\s*(?:OFF|MRP)?\s*$/i, "") // trailing discount
+        .replace(/\b(Filters?|Sort\s+By|Categories|Home|Shop|New|Sale|Explore\s+All|Bestsellers?|Trending|Featured|Free\s+Shipping|Cash\s+On\s+Delivery|Ships?\s+\w+)\b/gi, " ")
+        .replace(/[^\w\s\-–:.'&()/]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+      // Segment[0] (and sometimes others) may have a long nav/banner preamble
+      // before the actual product name. Split on sentence boundaries (periods)
+      // and take the LAST sentence — it's the product name text.
+      const sentences = nameSrc.split(/\.+/).map(s => s.trim()).filter(Boolean);
+      if (sentences.length > 1) nameSrc = sentences[sentences.length - 1];
+
+      // Strip trailing lone digits (e.g. "4" from "Pack of 30)4")
+      nameSrc = nameSrc.replace(/\s+\d{1,2}\s*$/, "").trim();
+
+      // Take the LAST reasonable-length phrase as product name (up to 10 words)
+      const words = nameSrc.split(/\s+/).filter(w => w.length > 0);
+      if (words.length < 2) continue;
+      const nameWords = words.slice(-10);
+      const productName = nameWords.join(" ").trim();
+
+      // Reject obvious nav/filler names
+      if (/^(HOME|SHOP|ABOUT|CONTACT|FILTERS?|SORT|CATEGORIES|MRP|NEW|SALE|ALL|EXPLORE|BESTSELL|FEATURE|LEGAL|PRIVACY|RETURN|BULK)/i.test(productName)) continue;
+      if (productName.length < 5 || productName.length > 120) continue;
+      // Reject names with fewer than 2 meaningful words
+      if (nameWords.length < 2) continue;
+
+      products.push({ name: productName, price });
+    }
+
+    // Deduplicate by name
+    const seen = new Set();
+    return products.filter(p => {
+      if (seen.has(p.name)) return false;
+      seen.add(p.name);
+      return true;
+    });
+  }
+
+  const confirmed = []; // price-verified products
+
+  // ── Priority 1: Alippo App Router — "/category-view/explore-all" ──────────
+  // Alippo's "explore all" page lists EVERY product with its selling price
+  // in the rendered HTML. This is the most reliable source for Alippo stores.
+  const alippoProductPaths = [
+    "/category-view/explore-all",
+    "/category-view/bestsellers",
+    "/category-view/new-arrivals",
+    "/collection-view/explore-all",
+    "/collection-view/all",
   ];
-
-  const productNames = new Set();
-
-  for (const path of pathsToTry) {
+  for (const path of alippoProductPaths) {
+    if (confirmed.length >= 5) break;
     try {
       const res = await fetch(`${base}${path}`, {
-        headers: { "User-Agent": "Mozilla/5.0" },
-        signal: AbortSignal.timeout(8000),
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+        signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) continue;
       const html = await res.text();
-      const $ = cheerio.load(html);
-      $("script, style, noscript, nav, footer, header").remove();
-
-      // Shopify / WooCommerce / generic product cards
-      const selectors = [
-        ".product-card__title",
-        ".product-title",
-        ".product__title",
-        ".product-name",
-        ".woocommerce-loop-product__title",
-        "h2.title",
-        "h3.title",
-        ".card__heading",
-        ".grid-product__title",
-        "[class*='product'] h2",
-        "[class*='product'] h3",
-        "[class*='product'] h4",
-        ".collection-grid__item h2",
-        ".collection-grid__item h3",
-        // JSON-LD structured data
-      ];
-
-      for (const sel of selectors) {
-        $(sel).each((_, el) => {
-          const name = $(el).text().trim();
-          if (name.length > 2 && name.length < 120) productNames.add(name);
-        });
-      }
-
-      // Also look for JSON-LD product data
-      $("script[type='application/ld+json']").each((_, el) => {
-        try {
-          const json = JSON.parse($(el).html() || "{}");
-          const items = Array.isArray(json) ? json : [json];
-          for (const item of items) {
-            if (item["@type"] === "Product" && item.name) productNames.add(item.name);
-            if (item["@type"] === "ItemList" && Array.isArray(item.itemListElement)) {
-              item.itemListElement.forEach(e => { if (e.name) productNames.add(e.name); });
-            }
-          }
-        } catch { /* skip malformed JSON-LD */ }
-      });
-
-      // Also try Shopify's products.json endpoint
-      if (path === "/collections/all" || path === "/") {
-        try {
-          const jsonRes = await fetch(`${base}/collections/all/products.json?limit=30`, {
-            headers: { "User-Agent": "Mozilla/5.0" },
-            signal: AbortSignal.timeout(5000),
-          });
-          if (jsonRes.ok) {
-            const jsonData = await jsonRes.json();
-            (jsonData.products || []).forEach(p => {
-              if (p.title) productNames.add(p.title);
-              // Also collect product types/tags
-              if (p.product_type) productNames.add(p.product_type);
-            });
-          }
-        } catch { /* no products.json */ }
-      }
-
-      if (productNames.size >= 5) break; // enough products found
-    } catch { /* try next path */ }
+      const prods = extractFromRenderedHtml(html);
+      prods.forEach(p => confirmed.push(p));
+      if (confirmed.length >= 5) break;
+    } catch { /* try next */ }
   }
 
-  return [...productNames].slice(0, 40); // cap at 40 product names
+  // ── Priority 2: Alippo category index — find populated category slugs ─────
+  // Visit /category-view to get the list of categories, then visit each one
+  // that has products (look for ₹ in the rendered HTML).
+  if (confirmed.length === 0) {
+    try {
+      const indexRes = await fetch(`${base}/category-view`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (indexRes.ok) {
+        const indexHtml = await indexRes.text();
+        // Find category slugs from links like /category-view/some-category
+        const slugs = [...indexHtml.matchAll(/href="(\/category-view\/[^"]+)"/g)]
+          .map(m => m[1])
+          .filter((v, i, a) => a.indexOf(v) === i)
+          .slice(0, 8);
+        for (const slug of slugs) {
+          if (confirmed.length >= 5) break;
+          try {
+            const catRes = await fetch(`${base}${slug}`, {
+              headers: { "User-Agent": "Mozilla/5.0" },
+              signal: AbortSignal.timeout(7000),
+            });
+            if (!catRes.ok) continue;
+            const catHtml = await catRes.text();
+            const prods = extractFromRenderedHtml(catHtml);
+            prods.forEach(p => confirmed.push(p));
+          } catch { /* try next slug */ }
+        }
+      }
+    } catch { /* skip */ }
+  }
+
+  // ── Priority 3: Shopify products.json ────────────────────────────────────
+  if (confirmed.length === 0) {
+    try {
+      const res = await fetch(`${base}/products.json?limit=30`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        (data.products || []).slice(0, 25).forEach(p => {
+          if (p.title) confirmed.push({
+            name: p.title,
+            price: parseFloat(p.variants?.[0]?.price ?? "0") || null,
+          });
+        });
+      }
+    } catch { /* not Shopify */ }
+  }
+
+  // ── Priority 4: WooCommerce REST API ──────────────────────────────────────
+  if (confirmed.length === 0) {
+    try {
+      const res = await fetch(`${base}/wp-json/wc/v3/products?per_page=20&status=publish`, {
+        headers: { "User-Agent": "Mozilla/5.0" },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          data.slice(0, 20).forEach(p => {
+            if (p.name) confirmed.push({
+              name: p.name,
+              price: parseFloat(p.price || p.regular_price || "0") || null,
+            });
+          });
+        }
+      }
+    } catch { /* not WooCommerce */ }
+  }
+
+  // ── Priority 5: Generic product listing pages (Shopify / custom) ──────────
+  if (confirmed.length === 0) {
+    for (const path of ["/collections/all", "/shop", "/products", "/store"]) {
+      if (confirmed.length >= 5) break;
+      try {
+        const res = await fetch(`${base}${path}`, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(6000),
+        });
+        if (!res.ok) continue;
+        const html = await res.text();
+        const prods = extractFromRenderedHtml(html);
+        prods.forEach(p => confirmed.push(p));
+      } catch { /* try next */ }
+    }
+  }
+
+  // ── Return result with reliability flag ──────────────────────────────────
+  let finalProducts = confirmed
+    .filter(p => p.name && p.name.length > 4)
+    // Sort highest-price first so Gemini sees the most valuable products at the top
+    .sort((a, b) => (b.price || 0) - (a.price || 0));
+
+  // ── Drop bottom-tier cheap products when premium products exist ──────────
+  // If the catalogue has a wide price range (e.g. ₹66,000 backpack vs ₹350 socks),
+  // Gemini will still pick the cheapest item unless we filter it out.
+  // Rule: if the top product is ≥10× more expensive than the cheapest item,
+  // drop everything priced below (maxPrice / 12). This keeps meaningful products
+  // and removes commodity filler (socks, basic caps, etc.).
+  const prices = finalProducts.map(p => p.price || 0).filter(p => p > 0);
+  if (prices.length >= 3) {
+    const maxPrice = prices[0]; // already sorted desc
+    const minPrice = prices[prices.length - 1];
+    if (maxPrice >= minPrice * 10) {
+      const threshold = Math.floor(maxPrice / 12); // e.g. ₹66k / 12 ≈ ₹5,500
+      const filtered  = finalProducts.filter(p => !p.price || p.price >= threshold);
+      // Only apply filter if we still have ≥3 products
+      if (filtered.length >= 3) finalProducts = filtered;
+    }
+  }
+
+  finalProducts = finalProducts.slice(0, 20);
+
+  if (finalProducts.length > 0) {
+    return {
+      reliable: true,
+      products: finalProducts.map(p =>
+        p.price ? `${p.name} (₹${Math.round(p.price).toLocaleString("en-IN")})` : p.name
+      ),
+    };
+  }
+  return { reliable: false, products: [] };
 }
 
 // ─── Master Blog Detector ─────────────────────────────────────────
@@ -633,7 +774,7 @@ async function callGeminiForJSON(prompt, apiKey) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 2048, temperature: 0.75 },
+          generationConfig: { maxOutputTokens: 2048, temperature: 0.95 },
           safetySettings: [
             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
             { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -700,8 +841,9 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
       const actualDay = yearData.day;
       // If the festival actually falls in a DIFFERENT month this year, it's not in targetMonth
       if (actualMonthIdx !== targetMonthIdx) return false;
-      // Same month — check if day has passed
-      if (actualMonthIdx === todayMonth) return actualDay >= todayDay;
+      // Same month — check if day has passed AND there's enough lead time to rank
+      // Require at least 14 days before the festival (blog needs time to index & rank).
+      if (actualMonthIdx === todayMonth) return actualDay - todayDay >= 14;
       if (actualMonthIdx > todayMonth) return true;
       return false; // actualMonth < todayMonth → already passed
     }
@@ -715,11 +857,14 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
   // Same month — check approximate day
   const dateStr = festivalDate || "";
 
+  // Minimum lead time: need at least 14 days before a festival to write, publish, and rank.
+  const MIN_LEAD_DAYS = 14;
+
   // Pattern: "January 14", "February 14", etc. — fixed date
   const fixedMatch = dateStr.match(/\b(\d{1,2})\b/);
   if (fixedMatch) {
     const day = parseInt(fixedMatch[1]);
-    return day >= todayDay;
+    return (day - todayDay) >= MIN_LEAD_DAYS;
   }
 
   // Pattern: "Second Sunday of May", "Third Sunday of June" etc.
@@ -736,15 +881,15 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
       if (dt.getDay() === targetDay) {
         count++;
         if (count === ordinal || ordinal === -1) {
-          return d >= todayDay;
+          return (d - todayDay) >= MIN_LEAD_DAYS;
         }
       }
     }
   }
 
-  // Pattern contains "full moon" — check year-specific; else if past ~15th assume passed
+  // Pattern contains "full moon" — only recommend if ≥14 days before mid-month full moon
   if (/full moon/i.test(dateStr)) {
-    return todayDay <= 14;
+    return todayDay <= 1; // full moon ~day 15; need 14-day lead → only valid if today ≤ day 1
   }
 
   // Pattern: "varies", etc. — no year-specific data, drop conservatively if month matches today
@@ -754,7 +899,7 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
 }
 
 // ─── Build Recommendation Prompt ─────────────────────────────────
-function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts }) {
+function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts, productsReliable, varietySeed, avoidTopic }) {
   const lastBlogSection = isFirstBlog
     ? `LAST PUBLISHED BLOG: None found — this appears to be a new store or a brand that has not started blogging yet. Base recommendation on niche + festival only.`
     : `LAST PUBLISHED BLOG:
@@ -773,12 +918,42 @@ ${festivals.map(f => `- ${f.name} (${f.date})
 
   const auditSnippet = (brandAudit || "").slice(0, 600);
 
-  const productsSection = actualProducts && actualProducts.length > 0
-    ? `ACTUAL PRODUCTS ON THIS WEBSITE (scraped directly — these are the ONLY products that exist):
+  const productsSection = (() => {
+    if (actualProducts && actualProducts.length > 0 && productsReliable) {
+      // Best case: confirmed products with prices from database/API
+      return `CONFIRMED PRODUCTS IN STOCK (scraped directly from the store database — these products definitely exist with live inventory):
 ${actualProducts.map(p => `• ${p}`).join("\n")}
 
-CRITICAL PRODUCT RULE: You MUST ONLY recommend blog topics about products and categories that are explicitly listed above. If the list above contains knee supports, compression socks, and back belts — write about THOSE products only. Do NOT invent, assume, or hallucinate any product that is not in this list. If you cannot find a relevant festival angle for these exact products, skip the festival and recommend an evergreen topic for the listed products instead.`
-    : `ACTUAL PRODUCTS: Could not be scraped automatically. Use the Brand Audit and Niche to infer products, but be conservative — only mention product types that are clearly implied by the brand niche.`;
+🚨 CRITICAL PRODUCT RULES:
+1. ONLY recommend a blog topic about products from the list above.
+2. Every product above has a price — that is proof it exists in inventory.
+3. If no festival angle applies to these specific products, skip the festival and recommend strong evergreen content about what IS in the list.
+4. The recommendedTopic must be something a customer can actually BUY on this website today.
+5. FOCUS ON HIGH-VALUE OR DISTINCTIVE PRODUCTS: The list is sorted by price (most expensive first). Build your topic around one of the TOP products — the expensive, specialized, or uniquely named ones. DO NOT choose the cheapest or most generic product (e.g., basic socks, plain caps) as the blog focus when premium or distinctive items are available. A blog about a ₹60,000 tactical backpack drives far more revenue than one about ₹350 socks.`;
+    }
+
+    if (actualProducts && actualProducts.length > 0 && !productsReliable) {
+      // Unconfirmed: scraped from HTML — might include category labels
+      return `POSSIBLE PRODUCTS (scraped from page HTML — confidence level: MEDIUM. These may include subcategory names, not just individual products):
+${actualProducts.map(p => `• ${p}`).join("\n")}
+
+🚨 STRICT RULES FOR UNCONFIRMED PRODUCT DATA:
+1. Treat the above as HINTS only — they may be subcategory labels, not real products.
+2. If any item looks like a generic category name (e.g. "Tactical Footwear", "Men's Shoes", "Sports Gear") — treat it as an EMPTY CATEGORY and DO NOT recommend a blog about it.
+3. Only recommend a topic if you see at least one SPECIFIC product name (containing a colour, material, model name, or unique identifier).
+4. If all items look like category names and none look like specific products — DO NOT recommend any product-specific blog. Instead, recommend a brand-story or educational topic that does not require specific products.`;
+    }
+
+    // Nothing found at all
+    return `ACTUAL PRODUCTS: NONE CONFIRMED. The store's product catalog could not be scraped.
+
+🚨 ABSOLUTE RULE — NO HALLUCINATION:
+- Do NOT invent product names or product types that are not explicitly mentioned in the Brand Audit below.
+- Do NOT recommend a topic about any specific product (boots, holsters, goggles, bags, etc.) unless the Brand Audit explicitly names that EXACT product type with clear evidence the brand sells it.
+- Read the Brand Audit carefully — only recommend topics about things the brand EXPLICITLY says it sells.
+- If the Brand Audit is vague or generic, recommend a brand-awareness or educational topic that does NOT name any specific product. It is better to be generic than to invent wrong products.
+- EXAMPLES OF WHAT NOT TO DO: Do not recommend "belly band holsters" for a tactical gear brand unless holsters are explicitly in the Brand Audit. Do not recommend "socks" unless socks are explicitly mentioned.`;
+  })();
 
   // Extract festival names mentioned in the last blog title so we don't repeat them
   const lastBlogTitle = (!isFirstBlog && lastBlog?.title) ? lastBlog.title.toLowerCase() : "";
@@ -789,11 +964,16 @@ CRITICAL PRODUCT RULE: You MUST ONLY recommend blog topics about products and ca
     ? `\nDO NOT REPEAT: The last blog already covered ${alreadyCoveredFestivals.join(", ")}. Do NOT recommend a topic about the same festival. Choose a different angle or festival entirely.`
     : "";
 
-  return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic.
+  // If the user clicked "Regenerate", pass the previous topic so we never repeat it
+  const avoidNote = avoidTopic
+    ? `\n⛔ PREVIOUS RECOMMENDATION (ALREADY REJECTED BY USER — DO NOT USE AGAIN): "${avoidTopic}"\nYou MUST suggest a completely different topic, different product, different angle. Do not recycle the same idea with different wording.`
+    : "";
+
+  return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic. [ref:${varietySeed}]
 
 TODAY'S DATE: ${todayString}
 
-CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.${alreadyCoveredNote}
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.${alreadyCoveredNote}${avoidNote}
 
 ---
 BRAND:
@@ -809,6 +989,17 @@ ${festivalSection}
 
 TARGET PUBLISH MONTH: ${targetMonth}
 ---
+
+🚨 BRAND CATEGORY RULE — READ THIS BEFORE WRITING ANYTHING:
+The recommendedTopic MUST match the brand's ACTUAL product category (Niche above) AND the CONFIRMED PRODUCTS list above.
+- If Niche is "tactical military gear" → topic MUST be about tactical backpacks, military apparel, army gear, shooting accessories, goggles, tactical footwear — ONLY products that appear in the CONFIRMED list above. NEVER invent product types (no holsters, no weapons, no products not in the list).
+- If Niche is "bags accessories" → topic MUST be about bags, handbags, purses, clutches, totes, wallets, sling bags. NEVER about jewellery, rings, necklaces, or earrings.
+- If Niche is "fashion apparel" → topic MUST be about clothing, sarees, kurtas, lehengas. NEVER about jewellery.
+- If Niche is "beauty skincare" → topic MUST be about skincare, makeup, serums. NEVER about jewellery.
+- If Niche is "footwear" → topic MUST be about shoes, sandals, sneakers. NEVER about jewellery.
+- Jewellery topics are ONLY valid when the brand's Niche explicitly contains "jewellery".
+- NEVER default to jewellery as a generic "accessories" fallback. It is not a default.
+- GOLDEN RULE: If a CONFIRMED PRODUCTS list is shown above, every topic you suggest MUST be about a product that is explicitly named in that list. Do NOT invent product types that are not in the list, even if they seem relevant to the niche.
 
 INSTRUCTIONS:
 Recommend exactly ONE blog topic that:
@@ -840,7 +1031,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no expla
 // ─── Route Handler ────────────────────────────────────────────────
 export async function POST(req) {
   try {
-    const { siteUrl, niche, brandAudit, scrapeContext, targetMonth } = await req.json();
+    const { siteUrl, niche, brandAudit, scrapeContext, targetMonth, _salt, avoidTopic } = await req.json();
     if (!siteUrl) {
       return Response.json({ error: "siteUrl is required" }, { status: 400 });
     }
@@ -851,7 +1042,19 @@ export async function POST(req) {
 
     // Filter out festivals that have already passed this month
     const allFestivals = getFestivalsForMonth(resolvedMonth);
-    const festivals    = allFestivals.filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST, f.name));
+    const todayYear    = todayIST.getFullYear();
+
+    const festivals = allFestivals
+      .filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST, f.name))
+      // Enrich generic date strings (e.g. "May (full moon day)") with the actual
+      // year-specific date so Gemini and the UI always show the real calendar date.
+      .map(f => {
+        const yearData = YEAR_SPECIFIC_FESTIVAL_DATES[f.name]?.[todayYear];
+        if (yearData) {
+          return { ...f, date: `${yearData.month} ${yearData.day}, ${todayYear}` };
+        }
+        return f;
+      });
 
     // ── Detect last blog + scrape products in parallel ───────────
     let lastBlog = null;
@@ -874,8 +1077,61 @@ export async function POST(req) {
       isFirstBlog = true; // graceful fallback
     }
 
-    if (productResult.status === "fulfilled" && productResult.value.length > 0) {
-      actualProducts = productResult.value;
+    let productsReliable = false;
+    if (productResult.status === "fulfilled" && productResult.value?.products?.length > 0) {
+      actualProducts   = productResult.value.products;
+      productsReliable = productResult.value.reliable === true;
+    }
+
+    // ── Fallback: extract product hints from client scrapeContext ──
+    // If server-side scraping found NOTHING, try to extract product mentions
+    // from the scrapeContext the client sent (homepage scrape from Step 1).
+    // This prevents Gemini from hallucinating product types when scraping fails.
+    if (actualProducts.length === 0 && scrapeContext) {
+      // Extract H2/H3/mainText from the scrapeContext string
+      const mainTextMatch = scrapeContext.match(/Core Content Sample:\s*([\s\S]*)/i);
+      const h2Match       = scrapeContext.match(/H2s:\s*(.+)/i);
+      const h3Match       = scrapeContext.match(/H3s:\s*(.+)/i);
+      const mainText      = mainTextMatch?.[1]?.trim() || "";
+      const h2s           = h2Match?.[1]?.trim() || "";
+      const h3s           = h3Match?.[1]?.trim() || "";
+
+      // Look for ₹ price anchors in the homepage mainText
+      const combined = [mainText, h2s, h3s].join(" ");
+      const segments  = combined.split(/(₹[\d,]+)/);
+      const fallbackProds = [];
+      const seen = new Set();
+      for (let i = 0; i + 1 < segments.length; i += 2) {
+        const before   = segments[i];
+        const priceRaw = segments[i + 1];
+        const price    = parseInt(priceRaw.replace(/[^\d]/g, ""), 10);
+        if (!price || price < 50) continue;
+        const beforeTrimmed = before.trim();
+        if (/^[-–]\s*\d+\s*%\s*(?:off|mrp)/i.test(beforeTrimmed) || /\bmrp\s*$/i.test(beforeTrimmed)) continue;
+        const words  = before.replace(/\s+/g, " ").trim().split(/\s+/).filter(w => w.length > 1);
+        if (words.length < 2) continue;
+        const name = words.slice(-8).join(" ").trim();
+        if (name.length > 5 && name.length < 100 && !seen.has(name)) {
+          seen.add(name);
+          fallbackProds.push(`${name} (₹${price.toLocaleString("en-IN")})`);
+        }
+        if (fallbackProds.length >= 10) break;
+      }
+
+      // Also collect category names from H2s/H3s as weak hints
+      const categoryHints = [h2s, h3s]
+        .join(" | ")
+        .split(/\s*\|\s*/)
+        .map(s => s.trim())
+        .filter(s => s.length > 3 && s.length < 60);
+
+      if (fallbackProds.length > 0) {
+        actualProducts   = fallbackProds;
+        productsReliable = true; // price-confirmed from homepage
+      } else if (categoryHints.length > 0) {
+        actualProducts   = categoryHints;
+        productsReliable = false; // category names only — medium confidence
+      }
     }
 
     // ── Call Gemini for recommendation ───────────────────────────
@@ -892,6 +1148,9 @@ export async function POST(req) {
       targetMonth: resolvedMonth,
       todayString,
       actualProducts,
+      productsReliable,
+      varietySeed: _salt || Math.random().toString(36).substring(2, 9),
+      avoidTopic: avoidTopic || "",
     });
 
     const rawText = await callGeminiForJSON(prompt, apiKey);
@@ -909,13 +1168,16 @@ export async function POST(req) {
       recommendation = JSON.parse(match[0]);
     }
 
-    return Response.json({
-      recommendation,
-      lastBlog: isFirstBlog ? null : lastBlog,
-      festival: festivals,
-      isFirstBlog,
-      targetMonth: resolvedMonth,
-    });
+    return Response.json(
+      {
+        recommendation,
+        lastBlog: isFirstBlog ? null : lastBlog,
+        festival: festivals,
+        isFirstBlog,
+        targetMonth: resolvedMonth,
+      },
+      { headers: { "Cache-Control": "no-store, no-cache, must-revalidate" } }
+    );
   } catch (err) {
     console.error("[topic-recommend] Error:", err.message);
     return Response.json({ error: err.message || "Failed to generate recommendation" }, { status: 500 });
