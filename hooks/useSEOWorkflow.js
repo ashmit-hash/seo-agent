@@ -491,6 +491,28 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
       const siteUrl     = siteUrlRef.current ?? "";
 
+      // ── Extract brand name explicitly ─────────────────────────
+      // Try multiple sources in priority order.
+      // This value is passed directly to the prompt so the AI has a
+      // confirmed, non-empty brand name variable before it starts writing.
+      const extractedBrandName = (
+        // 1. Audit text: "Brand Name: Samika" or "Brand: Samika"
+        auditText.match(/Brand(?:\s*Name)?:\s*([^\n|–\-]{2,40})/i)?.[1]?.trim() ||
+        // 2. Scrape title: "Samika | Jewellery Store" → take part before pipe/dash
+        scrapeCtx.match(/Title:\s*([^\n|–\-]+)/i)?.[1]?.split(/[\|\-–]/)[0]?.trim() ||
+        // 3. H1 tag from scrape
+        scrapeCtx.match(/H1:\s*([^\n]{2,50})/i)?.[1]?.trim() ||
+        // 4. Domain name as last resort (e.g. samika.co → Samika)
+        (() => {
+          try {
+            const host = new URL(siteUrl).hostname.replace(/^www\./, "");
+            const name = host.split(".")[0];
+            return name.charAt(0).toUpperCase() + name.slice(1);
+          } catch { return ""; }
+        })()
+      ) || "";
+      stepInputsRef.current[5].brandName = extractedBrandName;
+
       // ── Fetch real product catalog with prices ────────────────
       // Priority order: Alippo (__NEXT_DATA__) → Shopify → WooCommerce → HTML scrape
       let productContext = "";
@@ -739,7 +761,13 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". ONLY use products whose names contain at least one of these keywords: [${detectedCategory.keywords.join(" | ")}]. Any product whose name does NOT contain one of these keywords → REJECT it, do not include it in the blog.\nIf fewer than 3 valid products remain after filtering → stop and output: "ERROR: No [topic category] products found. Please supply ${detectedCategory.keywords[0]} product names and prices manually."`
         : "";
 
+      // ── Brand name label ──────────────────────────────────────
+      const brandNameLine = extractedBrandName
+        ? `Brand Name: ${extractedBrandName}`
+        : "";
+
       const websiteContext = [
+        brandNameLine,
         priceRangeLine,
         categoryFilterNote,
         scrapeCtx ? scrapeCtx.slice(0, 500) : "",
@@ -749,7 +777,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       stepInputsRef.current[5].websiteContext = websiteContext;
       stepInputsRef.current[5].productContext = productContext;
 
-      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext), 8000);
+      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext, extractedBrandName), 8000);
 
       // ── Auto-format into paragraphs before showing to user ───
       let finalBlogText = d6raw.text;
@@ -987,7 +1015,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       2: () => runStep2RecommendRef.current(stepInputsRef.current[2]?.targetMonth),
       3: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       4: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      5: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? ""), 8000, true),
+      5: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? "", inp.brandName ?? ""), 8000, true),
       6: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
       7: () => callSEO(PROMPT_STEP8(stepInputsRef.current[3]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
