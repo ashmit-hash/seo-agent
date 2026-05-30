@@ -189,7 +189,7 @@ export function useSEOWorkflow() {
   const [stepData,    dispatchStep]  = useReducer(stepReducer, {});
   const [hasSession,  setHasSession] = useState(false);
   const [brandContext, setBrandContextState] = useState({
-    category: "", products: "", audience: "",
+    brandName: "", category: "", products: "", audience: "",
   });
   const [internalData, setInternalData] = useState({
     radar: null, velocity: 0, rankings: [],
@@ -491,26 +491,13 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
       const siteUrl     = siteUrlRef.current ?? "";
 
-      // ── Extract brand name explicitly ─────────────────────────
-      // Try multiple sources in priority order.
-      // This value is passed directly to the prompt so the AI has a
-      // confirmed, non-empty brand name variable before it starts writing.
-      const extractedBrandName = (
-        // 1. Audit text: "Brand Name: Samika" or "Brand: Samika"
-        auditText.match(/Brand(?:\s*Name)?:\s*([^\n|–\-]{2,40})/i)?.[1]?.trim() ||
-        // 2. Scrape title: "Samika | Jewellery Store" → take part before pipe/dash
-        scrapeCtx.match(/Title:\s*([^\n|–\-]+)/i)?.[1]?.split(/[\|\-–]/)[0]?.trim() ||
-        // 3. H1 tag from scrape
-        scrapeCtx.match(/H1:\s*([^\n]{2,50})/i)?.[1]?.trim() ||
-        // 4. Domain name as last resort (e.g. samika.co → Samika)
-        (() => {
-          try {
-            const host = new URL(siteUrl).hostname.replace(/^www\./, "");
-            const name = host.split(".")[0];
-            return name.charAt(0).toUpperCase() + name.slice(1);
-          } catch { return ""; }
-        })()
-      ) || "";
+      // ── Brand name — ONLY from the user-provided input variable ──
+      // Never derived from HTML title, meta tags, H1, or any scraped element.
+      // If the user did not provide a brand name, or provided a generic
+      // platform default, the blog generation will be blocked by the prompt.
+      const GENERIC_BRAND_WORDS = /^(jewellery\s+website|silver\s+jewellery|fashion\s+store|online\s+store|my\s+store|our\s+store|e-?commerce\s+store|store|shop|website|brand|company|business)$/i;
+      const rawBrandName = (brandContextRef.current.brandName || "").trim();
+      const extractedBrandName = GENERIC_BRAND_WORDS.test(rawBrandName) ? "" : rawBrandName;
       stepInputsRef.current[5].brandName = extractedBrandName;
 
       // ── Fetch real product catalog with prices ────────────────
@@ -1161,9 +1148,11 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     hasSession, restoreSession, dismissSession,
     progressPct, activeStepId,
     brandContext,
-    businessCategory : brandContext.category,
-    keyProducts      : brandContext.products,
-    targetAudience   : brandContext.audience,
+    brandName          : brandContext.brandName,
+    businessCategory   : brandContext.category,
+    keyProducts        : brandContext.products,
+    targetAudience     : brandContext.audience,
+    setBrandName       : (v) => setBrandContext("brandName", v),
     setBusinessCategory: (v) => setBrandContext("category", v),
     setKeyProducts     : (v) => setBrandContext("products", v),
     setTargetAudience  : (v) => setBrandContext("audience", v),

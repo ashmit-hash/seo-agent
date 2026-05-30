@@ -1,15 +1,16 @@
 "use client";
 import React, { useState } from "react";
-import { 
-  ArrowRight, 
-  Globe, 
-  ChevronRight, 
-  CheckCircle2, 
-  Crown, 
+import {
+  ArrowRight,
+  Globe,
+  ChevronRight,
+  CheckCircle2,
+  Crown,
   Zap,
   Tag,
   Package,
-  Users
+  Users,
+  Store
 } from "lucide-react";
 
 const FEATURES = [
@@ -70,10 +71,11 @@ const PROVIDERS = [
   },
 ];
 
-export default function HeroSection({ 
-  url, setUrl, 
-  onStart, 
+export default function HeroSection({
+  url, setUrl,
+  onStart,
   provider, setProvider,
+  brandName, setBrandName,
   businessCategory, setBusinessCategory,
   keyProducts, setKeyProducts,
   targetAudience, setTargetAudience
@@ -165,6 +167,27 @@ export default function HeroSection({
                   autoFocus
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Brand Name — required for accurate blog generation */}
+          <div className="input-group">
+            <label className="field-label" htmlFor="brand-name">
+              Brand Name <span className="text-red">*</span>
+              <span style={{ fontWeight: 400, color: "var(--text-muted)", marginLeft: 6 }}>
+                — used in the blog content (e.g. Samika, Quadralis)
+              </span>
+            </label>
+            <div className="input-wrapper">
+              <Store size={16} className="input-icon-left" style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", pointerEvents: "none" }} />
+              <input
+                id="brand-name"
+                className="context-input"
+                value={brandName}
+                onChange={(e) => setBrandName(e.target.value)}
+                onKeyDown={handleKey}
+                placeholder="Your exact brand name"
+              />
             </div>
           </div>
 

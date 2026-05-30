@@ -23,6 +23,7 @@ export default function Page() {
     steps,
     hasSession, restoreSession, dismissSession,
     activeStepId,
+    brandName, setBrandName,
     businessCategory, setBusinessCategory,
     keyProducts, setKeyProducts,
     targetAudience, setTargetAudience,
@@ -75,6 +76,8 @@ export default function Page() {
                 onStart={start}
                 provider={provider}
                 setProvider={setProvider}
+                brandName={brandName}
+                setBrandName={setBrandName}
                 businessCategory={businessCategory}
                 setBusinessCategory={setBusinessCategory}
                 keyProducts={keyProducts}
