@@ -515,6 +515,56 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       try {
         const baseUrl = siteUrl.replace(/\/+$/, "");
 
+        // ── Category detection — maps blog topic to collection slug ──
+        // Used by Strategy 0 below to scrape the RIGHT tab, not the default one.
+        const CATEGORY_SLUG_MAP = [
+          { keywords: ["toe ring", "toe-ring", "toe_ring"], slugs: ["toe-rings", "toe_rings", "toerings", "rings"] },
+          { keywords: ["mangalsutra"],                       slugs: ["mangalsutras", "mangalsutra"] },
+          { keywords: ["anklet"],                            slugs: ["anklets", "anklet"] },
+          { keywords: ["bracelet", "bangle"],                slugs: ["bracelets", "bangles", "bracelet"] },
+          { keywords: ["earring", "stud", "dangler", "hoop"], slugs: ["earrings", "earring", "studs"] },
+          { keywords: ["necklace", "chain", "pendant"],      slugs: ["necklaces", "chains", "pendants", "necklace"] },
+          { keywords: ["ring"],                              slugs: ["rings", "ring"] },
+          { keywords: ["saree", "sari"],                     slugs: ["sarees", "saris", "saree"] },
+          { keywords: ["kurta"],                             slugs: ["kurtas", "kurta"] },
+          { keywords: ["bag", "handbag", "clutch"],          slugs: ["bags", "handbags", "clutches"] },
+        ];
+        const topicLower = resolvedTopic.toLowerCase();
+        const detectedCategory = CATEGORY_SLUG_MAP.find(c =>
+          c.keywords.some(kw => topicLower.includes(kw))
+        ) ?? null;
+
+        // ── Strategy 0: Category-specific collection URL ──────────
+        // For blogs about a specific product category (bracelets, anklets, etc.),
+        // scrape the category-specific URL FIRST. This prevents the scraper from
+        // pulling products from the default active tab (e.g., Anklets) when the
+        // blog is actually about Bracelets.
+        // Works for: Shopify (/collections/[slug]), generic (/category/[slug]), etc.
+        if (!productContext && detectedCategory) {
+          for (const slug of detectedCategory.slugs) {
+            if (productContext) break;
+            const catUrls = [
+              `${baseUrl}/collections/${slug}`,
+              `${baseUrl}/category/${slug}`,
+              `${baseUrl}/${slug}`,
+              `${baseUrl}/shop/${slug}`,
+            ];
+            for (const catUrl of catUrls) {
+              if (productContext) break;
+              const catRes = await fetch("/api/scrape", {
+                method : "POST",
+                headers: { "Content-Type": "application/json" },
+                body   : JSON.stringify({ url: catUrl }),
+              }).then(r => r.json()).catch(() => null);
+
+              if (catRes?.products?.length >= 2) {
+                const built = formatProductList(catRes.products, `${slug} collection (category tab)`);
+                if (built) { productContext = built; break; }
+              }
+            }
+          }
+        }
+
         // ── Strategy 1: Alippo / Next.js __NEXT_DATA__ ───────────
         // Alippo stores are Next.js apps. Next.js embeds ALL server-side page
         // props as JSON in a <script id="__NEXT_DATA__"> tag — this includes
@@ -681,8 +731,17 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ? `PRICE RANGE OF THIS BRAND: ₹${minPrice?.toLocaleString("en-IN")} – ₹${maxPrice.toLocaleString("en-IN")} (MAX ₹${maxPrice.toLocaleString("en-IN")}). NEVER write any price above ₹${maxPrice.toLocaleString("en-IN")} in the blog.`
         : "";
 
+      // ── Category filter annotation ────────────────────────────
+      // Tell the blog AI which category keywords to enforce for product validation.
+      // This is the guard that prevents bracelet blogs from using anklet products
+      // even if the raw product list contains both.
+      const categoryFilterNote = detectedCategory
+        ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". ONLY use products whose names contain at least one of these keywords: [${detectedCategory.keywords.join(" | ")}]. Any product whose name does NOT contain one of these keywords → REJECT it, do not include it in the blog.\nIf fewer than 3 valid products remain after filtering → stop and output: "ERROR: No [topic category] products found. Please supply ${detectedCategory.keywords[0]} product names and prices manually."`
+        : "";
+
       const websiteContext = [
         priceRangeLine,
+        categoryFilterNote,
         scrapeCtx ? scrapeCtx.slice(0, 500) : "",
         auditText ? auditText.slice(0, 300) : "",
         productContext ? productContext.slice(0, 2500) : "",
