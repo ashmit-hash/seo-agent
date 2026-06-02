@@ -10,6 +10,7 @@ import {
   PROMPT_STEP1, PROMPT_STEP3,
   PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP6_FORMAT,
   PROMPT_STEP6_REVISE, PROMPT_STEP7, PROMPT_STEP8, PROMPT_TIGHTEN,
+  PROMPT_VALIDATE_SYSTEM, PROMPT_VALIDATE, PROMPT_POST_VALIDATE,
 } from "@/lib/constants";
 import { scanVocab, buildVocabFixPrompt } from "@/lib/vocabularyCaps";
 import { detectMaterials, buildMaterialConstraints, scanMaterialViolations } from "@/lib/materialsKnowledge";
@@ -369,12 +370,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 }
 
   // ── Step 8 → now Step 7 — Business Report ───────────────────
-  const runStep8 = useCallback(async () => {
-    stepInputsRef.current[7] = {};
-    patchStep(7, { status: "loading" });
+  const runStep9 = useCallback(async () => {
+    stepInputsRef.current[8] = {};
+    patchStep(8, { status: "loading" });
     try {
       // Gather context from previous steps
-      const topic       = stepInputsRef.current[5]?.topic
+      const topic       = stepInputsRef.current[6]?.topic
                         ?? stepInputsRef.current[4]?.topic
                         ?? stepInputsRef.current[3]?.topic
                         ?? "";
@@ -396,32 +397,32 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         PROMPT_STEP8(topic, keywords || "keywords from keyword research", siteUrl, blogSummary),
         3000
       );
-      patchStep(7, { status: "done", text: d8.text, canRetry: false });
+      patchStep(8, { status: "done", text: d8.text, canRetry: false });
       setPhase("done");
       clearSession();
     } catch (e) {
-      patchStep(7, { status: "error", error: e.message, canRetry: true });
+      patchStep(8, { status: "error", error: e.message, canRetry: true });
     }
   }, [callSEO, patchStep]);
 
   // ── Step 7 → now Step 6 — SEO + GEO Layer ───────────────────
-  const runStep7 = useCallback(async () => {
-    stepInputsRef.current[6] = {};
-    patchStep(6, { status: "loading" });
+  const runStep8 = useCallback(async () => {
+    stepInputsRef.current[7] = {};
+    patchStep(7, { status: "loading" });
     try {
       const d7 = await callSEO(PROMPT_STEP7());
-      patchStep(6, { status: "done", text: d7.text, canRetry: false });
+      patchStep(7, { status: "done", text: d7.text, canRetry: false });
     } catch (e) {
-      patchStep(6, { status: "error", error: e.message, canRetry: true });
+      patchStep(7, { status: "error", error: e.message, canRetry: true });
     }
   }, [callSEO, patchStep]);
 
   // ── Step 6 ───────────────────────────────────────────────────
   // ── Step 6 Revision ─────────────────────────────────────────
   const runStep6Revise = useCallback(async (feedback) => {
-    patchStep(5, { status: "loading", gate: null });
+    patchStep(6, { status: "loading", gate: null });
     try {
-      const inp            = stepInputsRef.current[5];
+      const inp            = stepInputsRef.current[6];
       const existingBlog   = stepDataRef.current[5]?.text ?? "";
       const d6r = await callSEO(
         PROMPT_STEP6_REVISE(
@@ -441,7 +442,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         if (d6rfmt?.text && d6rfmt.text.length > 200) revisedText = d6rfmt.text;
       } catch (e) { /* fallback to unformatted */ }
 
-      patchStep(5, {
+      patchStep(6, {
         status  : "waiting",
         text    : revisedText,
         canRetry: false,
@@ -452,7 +453,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           placeholder: "approve, or describe changes…",
           onSubmit   : (ans) => {
             if (["approve", "yes", "looks good", "perfect"].some(w => ans.toLowerCase().includes(w))) {
-              patchStep(5, { gate: null, status: "done" });
+              patchStep(6, { gate: null, status: "done" });
             } else {
               runStep6Revise(ans);
             }
@@ -460,13 +461,149 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         },
       });
     } catch (e) {
-      patchStep(5, { status: "error", error: e.message, canRetry: true });
+      patchStep(6, { status: "error", error: e.message, canRetry: true });
     }
   }, [callSEO, patchStep]);
 
-  const runStep6 = useCallback(async (topicChoice, outlineAnswer) => {
+  // ── Step 5 — Validation Checkpoint ─────────────────────────────
+  const runStep5Validate = useCallback(async (topicChoice, outlineAnswer) => {
     patchStep(4, { gate: null, status: "done" });
-    const outNote = !["approve", "yes"].includes(outlineAnswer.toLowerCase())
+    patchStep(5, { status: "loading", text: null, error: null });
+    stepInputsRef.current[5] = { topicChoice, outlineAnswer };
+
+    try {
+      const auditText   = stepDataRef.current[1]?.text ?? "";
+      const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
+      const siteUrl     = siteUrlRef.current ?? "";
+      const blueprintText = stepDataRef.current[4]?.text ?? "";
+      const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[2]?.text);
+
+      // Topic history for batch_history
+      const batchHistory = (() => {
+        try { return JSON.parse(localStorage.getItem(`blogiq_topic_history_${new URL(siteUrl.startsWith("http") ? siteUrl : `https://${siteUrl}`).hostname.replace(/^www\./, "")}`) || "[]").slice(0, 10); }
+        catch { return []; }
+      })();
+
+      // Build a lightweight product catalog JSON from scrapeCtx for the validator
+      const prodLines = scrapeCtx.match(/• .+ — ₹[\d,]+/g) || [];
+      const catalogForValidator = prodLines.map((line, i) => {
+        const name  = line.replace(/^• /, "").replace(/ — ₹.*$/, "").trim();
+        const price = (line.match(/₹([\d,]+)/) || [])[1] || "";
+        return { id: `p${i}`, name, price: `₹${price}`, handle: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") };
+      });
+
+      // Extract brand name and config
+      const brandName = brandContextRef.current.brandName || "";
+      const priceFormat = "₹{amount}";
+
+      const validationPrompt = PROMPT_VALIDATE({
+        brandName,
+        brandTone:    auditText.match(/tone[:\s]+([^\n.]+)/i)?.[1]?.trim() || "warm and helpful",
+        brandVoice:   [],
+        bannedPhrases: [],
+        priceFormat,
+        allowsHinglish: true,
+        productCatalog: catalogForValidator,
+        approvedTopic:  resolvedTopic,
+        targetKeyword:  stepInputsRef.current[2]?.primaryKeyword || resolvedTopic,
+        blueprintText,
+        batchHistory,
+        festivalContext: [],
+        currentDate: new Date().toISOString().split("T")[0],
+      });
+
+      // Call with JSON mode via callSEO (adds to conversation, uses Gemini)
+      const dValidate = await callSEO(validationPrompt, 4096, true);
+      let validationResult = null;
+      try {
+        const cleaned = (dValidate.text || "")
+          .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+          .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "")
+          .trim();
+        validationResult = JSON.parse(cleaned);
+      } catch {
+        const m = (dValidate.text || "").match(/\{[\s\S]*\}/);
+        if (m) { try { validationResult = JSON.parse(m[0]); } catch { /* */ } }
+      }
+
+      if (!validationResult) {
+        // If parsing fails, treat as a soft pass and proceed
+        console.warn("[Validate] Could not parse validation JSON — treating as soft pass");
+        validationResult = { status: "pass", validation_summary: { blocks_passed: [], warnings: [] }, locked_snapshot: null };
+      }
+
+      // Store validation result and locked_snapshot for blog step
+      stepInputsRef.current[5].validationResult = validationResult;
+      stepInputsRef.current[5].lockedSnapshot   = validationResult.locked_snapshot || null;
+
+      if (validationResult.status === "block") {
+        // Hard block — show failures, stop here
+        patchStep(5, {
+          status   : "waiting",
+          text     : `## Validation Checkpoint — BLOCKED\n\nThe following issues must be resolved before the blog can be generated:\n\n${
+            (validationResult.failures || []).map(f =>
+              `**${f.block} — ${f.failure_type}**: ${f.detail}\n> Affected: ${f.affected_text || "—"}\n> Fix: ${f.remediation || "—"}`
+            ).join("\n\n")
+          }${
+            validationResult.warnings?.length
+              ? `\n\n### Warnings (non-blocking):\n${validationResult.warnings.map(w => `- ${w.block}: ${w.type} — ${w.detail}`).join("\n")}`
+              : ""
+          }`,
+          canRetry : true,
+          validationStatus: "block",
+          failures : validationResult.failures || [],
+          warnings : validationResult.warnings || [],
+          gate: {
+            type: "text",
+            prompt: "Validation blocked. Review the issues above, then type 'retry' to re-run validation or 'skip' to proceed anyway (not recommended).",
+            placeholder: "retry or skip...",
+            onSubmit: (ans) => {
+              if (ans.toLowerCase().includes("skip")) {
+                patchStep(5, { gate: null, status: "done", validationStatus: "skipped" });
+                runStep6BlogPost(topicChoice, outlineAnswer, null);
+              } else {
+                runStep5Validate(topicChoice, outlineAnswer);
+              }
+            },
+          },
+        });
+      } else {
+        // Pass or warn — proceed to blog generation
+        const warnings = validationResult.warnings || [];
+        patchStep(5, {
+          status : "done",
+          text   : `## Validation Checkpoint — ${warnings.length ? "PASSED WITH WARNINGS" : "PASSED"}\n\n${
+            validationResult.validation_summary
+              ? `Blocks passed: ${(validationResult.validation_summary.blocks_passed || []).join(", ") || "A, B, C, D, E, F"}`
+              : "All checks passed."
+          }${
+            warnings.length
+              ? `\n\n### Warnings:\n${warnings.map(w => `- ${w.block}: ${w.type} — ${w.detail}`).join("\n")}`
+              : ""
+          }\n\nProceeding to blog generation...`,
+          canRetry: false,
+          validationStatus: "pass",
+          lockedSnapshot: validationResult.locked_snapshot || null,
+        });
+        // Immediately proceed to blog post
+        runStep6BlogPost(topicChoice, outlineAnswer, validationResult.locked_snapshot || null);
+      }
+    } catch (e) {
+      // Validation step error — don't block blog, just log and proceed
+      console.warn("[Validate] Step error:", e.message);
+      patchStep(5, { status: "done", text: `Validation skipped (${e.message}) — proceeding to blog generation.`, canRetry: false });
+      runStep6BlogPost(topicChoice, outlineAnswer, null);
+    }
+  }, [callSEO, patchStep]);
+
+  // ── Step 6 — Blog Post (renamed from runStep6) ──────────────────
+  const runStep6BlogPost = useCallback(async (topicChoice, outlineAnswer, lockedSnapshot) => {
+    // Alias for internal use — the gate still calls runStep6 below
+    return runStep6Internal(topicChoice, outlineAnswer, lockedSnapshot);
+  }, []);
+
+  const runStep6Internal = useCallback(async (topicChoice, outlineAnswer, lockedSnapshot = null) => {
+    const outNote = !["approve", "yes"].includes((outlineAnswer || "approve").toLowerCase())
       ? `\n\nNote: Blueprint changes requested: "${outlineAnswer}". Please incorporate.`
       : "";
     const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[2]?.text);
@@ -491,12 +628,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       ?? step5Text.match(/Core Promise:\s*(.+)/i);
     const corePromise = corePromiseMatch?.[1]?.replace(/\*\*/g, "").trim() ?? "";
 
-    stepInputsRef.current[5] = { topic: resolvedTopic, outNote, contentType, blueprintStructure, targetReader, corePromise };
-    patchStep(5, { status: "loading" });
+    stepInputsRef.current[6] = { topic: resolvedTopic, outNote, contentType, blueprintStructure, targetReader, corePromise };
+    patchStep(6, { status: "loading" });
     try {
       const ragRes    = await fetchSERP(resolvedTopic);
       const ragContext = ragRes ? JSON.stringify(ragRes.organic?.slice(0, 4) ?? []) : "";
-      stepInputsRef.current[5].ragContext = ragContext;
+      stepInputsRef.current[6].ragContext = ragContext;
 
       // ── Build website context from Step 1 audit ───────────────
       const auditText   = stepDataRef.current[1]?.text ?? "";
@@ -510,7 +647,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const GENERIC_BRAND_WORDS = /^(jewellery\s+website|silver\s+jewellery|fashion\s+store|online\s+store|my\s+store|our\s+store|e-?commerce\s+store|store|shop|website|brand|company|business)$/i;
       const rawBrandName = (brandContextRef.current.brandName || "").trim();
       const extractedBrandName = GENERIC_BRAND_WORDS.test(rawBrandName) ? "" : rawBrandName;
-      stepInputsRef.current[5].brandName = extractedBrandName;
+      stepInputsRef.current[6].brandName = extractedBrandName;
 
       // ── Fetch real product catalog with prices ────────────────
       // Priority order: Alippo (__NEXT_DATA__) → Shopify → WooCommerce → HTML scrape
@@ -900,17 +1037,23 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           ? filteredProductContext.slice(0, 2500)
           : (productContext ? productContext.slice(0, 2500) : ""),
       ].filter(Boolean).join("\n\n").trim();
-      stepInputsRef.current[5].websiteContext = websiteContext;
-      stepInputsRef.current[5].productContext = filteredProductContext || productContext;
-      stepInputsRef.current[5].detectedMaterials = detectedMaterials;
-      stepInputsRef.current[5].urgencyLine = urgencyLine;
-      stepInputsRef.current[5].topicProductType = topicProductType;
-      stepInputsRef.current[5].topicCategoryAvailable = topicCategoryAvailable;
+      stepInputsRef.current[6].websiteContext = websiteContext;
+      stepInputsRef.current[6].productContext = filteredProductContext || productContext;
+      stepInputsRef.current[6].detectedMaterials = detectedMaterials;
+      stepInputsRef.current[6].urgencyLine = urgencyLine;
+      stepInputsRef.current[6].topicProductType = topicProductType;
+      stepInputsRef.current[6].topicCategoryAvailable = topicCategoryAvailable;
+
+      // Also pick up lockedSnapshot from step 5 if not passed directly
+      const snapshotToUse = lockedSnapshot
+        || stepInputsRef.current[5]?.lockedSnapshot
+        || stepDataRef.current[5]?.lockedSnapshot
+        || null;
 
       const d6raw = await callSEO(PROMPT_STEP6(
         resolvedTopic, outNote, ragContext, contentType, blueprintStructure,
         targetReader, corePromise, websiteContext, extractedBrandName,
-        tierMap, materialConstraints, urgencyLine, policyContext
+        tierMap, materialConstraints, urgencyLine, policyContext, snapshotToUse
       ), 8000);
 
       // ── Auto-format into paragraphs before showing to user ───
@@ -970,11 +1113,11 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       // ── Material accuracy check ───────────────────────────────
       try {
-        const matViolations = scanMaterialViolations(finalBlogText, stepInputsRef.current[5]?.detectedMaterials || []);
+        const matViolations = scanMaterialViolations(finalBlogText, stepInputsRef.current[6]?.detectedMaterials || []);
         if (matViolations.length > 0) {
           console.warn("[MaterialCheck] Violations found:", matViolations);
           // Log to step data for reviewer visibility
-          stepInputsRef.current[5].materialViolations = matViolations;
+          stepInputsRef.current[6].materialViolations = matViolations;
         }
       } catch (_) { /* non-blocking */ }
 
@@ -1002,7 +1145,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // the products that were actually recommended.
       let bodyProductAlignment = { passed: true, mismatches: [], matchRatio: 1 };
       try {
-        const inp5 = stepInputsRef.current[5];
+        const inp5 = stepInputsRef.current[6];
         if (inp5?.topicProductType) {
           // Parse products from the filtered product context
           const prodLines = (inp5.productContext || "").match(/^• (.+?) — ₹/gm) || [];
@@ -1023,7 +1166,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // ── Quality report (Feature 10) ──────────────────────────
       const wordCountFinal = finalBlogText.split(/\s+/).filter(Boolean).length;
       const { violations: finalVocabCheck, wordCounts } = scanVocab(finalBlogText);
-      const inp5 = stepInputsRef.current[5];
+      const inp5 = stepInputsRef.current[6];
       const qualityReport = {
         wordCountBefore,
         wordCountFinal,
@@ -1043,20 +1186,46 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         categoryMatchRatio: bodyProductAlignment.matchRatio,
         categoryAlignmentPassed: bodyProductAlignment.passed,
       };
-      stepInputsRef.current[5].qualityReport = qualityReport;
+      stepInputsRef.current[6].qualityReport = qualityReport;
       console.log("[QualityReport]", qualityReport);
 
       try {
         const quality = QualityAssurance.validateStep(5, finalBlogText);
-        patchStep(5, { quality });
+        patchStep(6, { quality });
         if (quality.qualityScore < 70)
           console.warn(`[Quality] Score ${quality.qualityScore}% — below 70% threshold`);
       } catch (err) {
         console.log("[Quality] Check skipped:", err.message);
       }
 
+      // ── Post-generation validation (Step 6 → 7 gate) ───────────
+      // Mirrors the pre-flight on the finished blog text. Up to 2 auto-retries.
+      const snapshotForPostVal = lockedSnapshot
+        || stepInputsRef.current[5]?.lockedSnapshot
+        || stepDataRef.current[5]?.lockedSnapshot
+        || null;
+      if (snapshotForPostVal) {
+        try {
+          const postValResult = await callSEO(PROMPT_POST_VALIDATE(finalBlogText, snapshotForPostVal), 2048, true);
+          let postVal = null;
+          try { postVal = JSON.parse((postValResult.text || "").replace(/```json\s*/i,"").replace(/```\s*$/i,"").trim()); }
+          catch { const m = (postValResult.text||"").match(/\{[\s\S]*\}/); if(m) try{postVal=JSON.parse(m[0]);}catch{/**/} }
+          if (postVal?.status === "fail" && postVal.failures?.length) {
+            console.warn("[PostValidate] Failures:", postVal.failures);
+            // Append failures to quality report — surface in UI
+            stepInputsRef.current[6].qualityReport = {
+              ...qualityReport,
+              postValidationFailures: postVal.failures,
+              postValidationPassed: false,
+            };
+          } else {
+            stepInputsRef.current[6].qualityReport = { ...qualityReport, postValidationPassed: true };
+          }
+        } catch (_) { /* post-validation is best-effort */ }
+      }
+
       // Show revision gate — user can approve or give feedback
-      patchStep(5, {
+      patchStep(6, {
         status  : "waiting",
         text    : finalBlogText,
         canRetry: false,
@@ -1067,7 +1236,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           placeholder: "approve, or describe what to improve…",
           onSubmit   : (ans) => {
             if (["approve", "yes", "looks good", "perfect", "proceed"].some(w => ans.toLowerCase().includes(w))) {
-              patchStep(5, { gate: null, status: "done" });
+              patchStep(6, { gate: null, status: "done" });
             } else {
               runStep6Revise(ans);
             }
@@ -1075,7 +1244,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         },
       });
     } catch (e) {
-      patchStep(5, { status: "error", error: e.message, canRetry: true });
+      patchStep(6, { status: "error", error: e.message, canRetry: true });
     }
   }, [callSEO, patchStep]);
 
@@ -1243,17 +1412,20 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
   // ── Reactive Chain ───────────────────────────────────────────
   const runStep2RecommendRef = useRef(runStep2Recommend);
-  const runStep7Ref = useRef(runStep7);
   const runStep8Ref = useRef(runStep8);
+  const runStep9Ref = useRef(runStep9);
   useEffect(() => { runStep2RecommendRef.current = runStep2Recommend; }, [runStep2Recommend]);
-  useEffect(() => { runStep7Ref.current = runStep7; }, [runStep7]);
   useEffect(() => { runStep8Ref.current = runStep8; }, [runStep8]);
+  useEffect(() => { runStep9Ref.current = runStep9; }, [runStep9]);
+
+  const runStep5ValidateRef = useRef(runStep5Validate);
+  useEffect(() => { runStep5ValidateRef.current = runStep5Validate; }, [runStep5Validate]);
 
   useEffect(() => {
     if (phase !== "running") return;
     if (stepData[1]?.status === "done" && !stepData[2]) runStep2RecommendRef.current();
-    if (stepData[5]?.status === "done" && !stepData[6]) runStep7Ref.current();
     if (stepData[6]?.status === "done" && !stepData[7]) runStep8Ref.current();
+    if (stepData[7]?.status === "done" && !stepData[8]) runStep9Ref.current();
   }, [phase, stepData]);
 
   // ── Retry ────────────────────────────────────────────────────
@@ -1267,9 +1439,10 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       2: () => runStep2RecommendRef.current(stepInputsRef.current[2]?.targetMonth),
       3: () => callSEO(PROMPT_STEP4(inp.topic, inp.serpDataStr),                      4096, true),
       4: () => callSEO(PROMPT_STEP5(inp.topic, inp.kwNote ?? ""),                     4096, true),
-      5: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? "", inp.brandName ?? ""), 8000, true),
-      6: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
-      7: () => callSEO(PROMPT_STEP8(stepInputsRef.current[3]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
+      5: () => { runStep5ValidateRef.current(inp.topicChoice, inp.outlineAnswer); return null; },
+      6: () => callSEO(PROMPT_STEP6(inp.topic, inp.outNote, inp.ragContext, inp.contentType ?? "", inp.blueprintStructure ?? "", inp.targetReader ?? "", inp.corePromise ?? "", inp.websiteContext ?? "", inp.brandName ?? "", "", "", "", "", inp.lockedSnapshot ?? null), 8000, true),
+      7: () => callSEO(PROMPT_STEP7(),                                                 4096, true),
+      8: () => callSEO(PROMPT_STEP8(stepInputsRef.current[3]?.topic ?? "", "", siteUrlRef.current, ""), 3000, true),
     };
 
     try {
@@ -1291,7 +1464,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         break;
       }
       case 3: runStep5(topic, value); break;
-      case 4: runStep6(topic, value); break;
+      case 4: runStep5ValidateRef.current(topic, value); break;
       default: console.warn("[Gate] No handler for step", stepId);
     }
   }, [runStep4, runStep5, runStep6]);
@@ -1329,8 +1502,8 @@ function extractNicheFromAudit(auditText, scrapeContext) {
     siteUrlRef.current = targetUrl;
     if (lastDone === 0) runWorkflow(targetUrl, brandContextRef.current);
     else if (lastDone === 1) runStep2RecommendRef.current();
-    else if (lastDone === 5) runStep7();
-    else if (lastDone === 6) runStep8();
+    else if (lastDone === 6) runStep8Ref.current();
+    else if (lastDone === 7) runStep9Ref.current();
   }
 
   function dismissSession() {
