@@ -466,8 +466,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   }, [callSEO, patchStep]);
 
   // ── Step 5 — Validation Checkpoint ─────────────────────────────
-  const runStep5Validate = useCallback(async (topicChoice, outlineAnswer) => {
-    patchStep(4, { gate: null, status: "done" });
+  const runStep5Validate = useCallback(async (topicChoice, outlineAnswer, blueprintTextDirect = null) => {
     patchStep(5, { status: "loading", text: null, error: null });
     stepInputsRef.current[5] = { topicChoice, outlineAnswer };
 
@@ -475,7 +474,8 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const auditText   = stepDataRef.current[1]?.text ?? "";
       const scrapeCtx   = stepInputsRef.current[1]?.scrapeContext ?? "";
       const siteUrl     = siteUrlRef.current ?? "";
-      const blueprintText = stepDataRef.current[4]?.text ?? "";
+      // Use directly-passed blueprint text to avoid stepDataRef timing lag
+      const blueprintText = blueprintTextDirect || stepDataRef.current[4]?.text || "";
       const resolvedTopic = resolveTopicChoice(topicChoice, stepDataRef.current[2]?.text);
 
       // Topic history for batch_history
@@ -496,6 +496,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const brandName = brandContextRef.current.brandName || "";
       const priceFormat = "₹{amount}";
 
+      // Detect if blueprint is a structure outline (no product names yet)
+      // Products are injected during blog generation — Block A must be a warning, not a block
+      const blueprintHasProducts = catalogForValidator.length > 0 &&
+        catalogForValidator.some(p => p.name && blueprintText.toLowerCase().includes(p.name.toLowerCase().slice(0, 8)));
+      const blockAMode = blueprintHasProducts ? "block" : "warn";
+
       const validationPrompt = PROMPT_VALIDATE({
         brandName,
         brandTone:    auditText.match(/tone[:\s]+([^\n.]+)/i)?.[1]?.trim() || "warm and helpful",
@@ -510,6 +516,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         batchHistory,
         festivalContext: [],
         currentDate: new Date().toISOString().split("T")[0],
+        blockAMode, // "warn" when blueprint is a structure outline (products added later in blog step)
       });
 
       // Call with JSON mode via callSEO (adds to conversation, uses Gemini)
@@ -1263,8 +1270,8 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // Auto-proceed — blueprint is shown but no approval gate needed
       // Approval happens after the blog is generated (Step 5)
       patchStep(4, { status: "done", text: d5.text, canRetry: false });
-      // Immediately trigger Validation Checkpoint (Step 5)
-      runStep5Validate(resolvedTopic, "approve");
+      // Pass blueprint text directly — stepDataRef may not have updated yet
+      runStep5Validate(resolvedTopic, "approve", d5.text);
     } catch (e) {
       patchStep(4, { status: "error", error: e.message, canRetry: true });
     }
