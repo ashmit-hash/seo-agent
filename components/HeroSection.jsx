@@ -31,7 +31,7 @@ const GEMINI_ICON = (
 const PROVIDERS = [
   {
     id: "gemini",
-    name: "Gemini 2.0",
+    name: "Gemini 2.5",
     sub: "Google",
     badge: "Flash",
     color: "#1A73E8",

@@ -29,7 +29,7 @@ export default function Header({ phase, siteUrl, onReset, provider, onProviderCh
               value={provider}
               onChange={(e) => onProviderChange(e.target.value)}
             >
-              <option value="gemini">Gemini 2.0 Flash</option>
+              <option value="gemini">Gemini 2.5 Flash</option>
               <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
               <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
             </select>

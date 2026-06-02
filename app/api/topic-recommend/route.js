@@ -758,11 +758,11 @@ async function detectLastBlog(siteUrl) {
 
 // ─── Gemini Direct Call ───────────────────────────────────────────
 async function callGeminiForJSON(prompt, apiKey) {
-  // Use stable pinned model IDs — avoid aliases that get silently deprecated
+  // Use stable models — 2.0 series fully retired by Google as of Jun 2026
   const modelsToTry = [
-    "gemini-2.0-flash-001",
-    "gemini-1.5-flash-001",
-    "gemini-1.5-pro-001",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
   ];
 
   let lastErr;
