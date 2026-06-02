@@ -599,10 +599,10 @@ function extractNicheFromAudit(auditText, scrapeContext) {
   // ── Step 6 — Blog Post (renamed from runStep6) ──────────────────
   const runStep6BlogPost = useCallback(async (topicChoice, outlineAnswer, lockedSnapshot) => {
     // Alias for internal use — the gate still calls runStep6 below
-    return runStep6Internal(topicChoice, outlineAnswer, lockedSnapshot);
+    return runStep6(topicChoice, outlineAnswer, lockedSnapshot);
   }, []);
 
-  const runStep6Internal = useCallback(async (topicChoice, outlineAnswer, lockedSnapshot = null) => {
+  const runStep6 = useCallback(async (topicChoice, outlineAnswer, lockedSnapshot = null) => {
     const outNote = !["approve", "yes"].includes((outlineAnswer || "approve").toLowerCase())
       ? `\n\nNote: Blueprint changes requested: "${outlineAnswer}". Please incorporate.`
       : "";
@@ -1263,12 +1263,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       // Auto-proceed — blueprint is shown but no approval gate needed
       // Approval happens after the blog is generated (Step 5)
       patchStep(4, { status: "done", text: d5.text, canRetry: false });
-      // Immediately trigger Step 6 (now Step 5)
-      runStep6(resolvedTopic, "approve");
+      // Immediately trigger Validation Checkpoint (Step 5)
+      runStep5Validate(resolvedTopic, "approve");
     } catch (e) {
       patchStep(4, { status: "error", error: e.message, canRetry: true });
     }
-  }, [callSEO, patchStep, runStep6]);
+  }, [callSEO, patchStep, runStep5Validate]);
 
   // ── Step 4 → now Step 3 ──────────────────────────────────────
   const runStep4 = useCallback(async (topicChoice, primaryKeyword) => {
@@ -1467,7 +1467,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       case 4: runStep5ValidateRef.current(topic, value); break;
       default: console.warn("[Gate] No handler for step", stepId);
     }
-  }, [runStep4, runStep5, runStep6]);
+  }, [runStep4, runStep5, runStep5Validate]);
 
   // ── Session Restore ──────────────────────────────────────────
   function restoreSession() {
