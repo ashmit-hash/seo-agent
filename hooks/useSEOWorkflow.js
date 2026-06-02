@@ -521,27 +521,25 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         return `REAL PRODUCTS FROM THIS STORE — USE THESE EXACT NAMES AND PRICES IN THE BLOG:\n${lines.join("\n")}\n(Source: ${source})`;
       }
 
+      // ── Category detection — hoisted above try so it's accessible after ──
+      const CATEGORY_SLUG_MAP = [
+        { keywords: ["toe ring", "toe-ring", "toe_ring"], slugs: ["toe-rings", "toe_rings", "toerings", "rings"] },
+        { keywords: ["mangalsutra"],                       slugs: ["mangalsutras", "mangalsutra"] },
+        { keywords: ["anklet"],                            slugs: ["anklets", "anklet"] },
+        { keywords: ["bracelet", "bangle"],                slugs: ["bracelets", "bangles", "bracelet"] },
+        { keywords: ["earring", "stud", "dangler", "hoop"], slugs: ["earrings", "earring", "studs"] },
+        { keywords: ["necklace", "chain", "pendant"],      slugs: ["necklaces", "chains", "pendants", "necklace"] },
+        { keywords: ["ring"],                              slugs: ["rings", "ring"] },
+        { keywords: ["saree", "sari"],                     slugs: ["sarees", "saris", "saree"] },
+        { keywords: ["kurta"],                             slugs: ["kurtas", "kurta"] },
+        { keywords: ["bag", "handbag", "clutch"],          slugs: ["bags", "handbags", "clutches"] },
+      ];
+      const detectedCategory = CATEGORY_SLUG_MAP.find(c =>
+        c.keywords.some(kw => resolvedTopic.toLowerCase().includes(kw))
+      ) ?? null;
+
       try {
         const baseUrl = siteUrl.replace(/\/+$/, "");
-
-        // ── Category detection — maps blog topic to collection slug ──
-        // Used by Strategy 0 below to scrape the RIGHT tab, not the default one.
-        const CATEGORY_SLUG_MAP = [
-          { keywords: ["toe ring", "toe-ring", "toe_ring"], slugs: ["toe-rings", "toe_rings", "toerings", "rings"] },
-          { keywords: ["mangalsutra"],                       slugs: ["mangalsutras", "mangalsutra"] },
-          { keywords: ["anklet"],                            slugs: ["anklets", "anklet"] },
-          { keywords: ["bracelet", "bangle"],                slugs: ["bracelets", "bangles", "bracelet"] },
-          { keywords: ["earring", "stud", "dangler", "hoop"], slugs: ["earrings", "earring", "studs"] },
-          { keywords: ["necklace", "chain", "pendant"],      slugs: ["necklaces", "chains", "pendants", "necklace"] },
-          { keywords: ["ring"],                              slugs: ["rings", "ring"] },
-          { keywords: ["saree", "sari"],                     slugs: ["sarees", "saris", "saree"] },
-          { keywords: ["kurta"],                             slugs: ["kurtas", "kurta"] },
-          { keywords: ["bag", "handbag", "clutch"],          slugs: ["bags", "handbags", "clutches"] },
-        ];
-        const topicLower = resolvedTopic.toLowerCase();
-        const detectedCategory = CATEGORY_SLUG_MAP.find(c =>
-          c.keywords.some(kw => topicLower.includes(kw))
-        ) ?? null;
 
         // ── Strategy 0: Category-specific collection URL ──────────
         // For blogs about a specific product category (bracelets, anklets, etc.),
