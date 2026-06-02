@@ -758,12 +758,11 @@ async function detectLastBlog(siteUrl) {
 
 // ─── Gemini Direct Call ───────────────────────────────────────────
 async function callGeminiForJSON(prompt, apiKey) {
-  // Use stable models only — preview models get deprecated without notice
+  // Use stable pinned model IDs — avoid aliases that get silently deprecated
   const modelsToTry = [
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite-preview-06-17",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.0-flash-001",
+    "gemini-1.5-flash-001",
+    "gemini-1.5-pro-001",
   ];
 
   let lastErr;
@@ -781,9 +780,6 @@ async function callGeminiForJSON(prompt, apiKey) {
             // Force pure JSON output — no markdown fences, no preamble text
             responseMimeType: "application/json",
           },
-          // Disable thinking for JSON calls — thinking tokens pollute the output
-          // and are wasted on structured data generation
-          thinkingConfig: { thinkingBudget: 0 },
           safetySettings: [
             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
             { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
