@@ -969,7 +969,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         : "";
       stepInputsRef.current[1].scrapeContext = scrapeContext;
 
-      const d1 = await callSEO(PROMPT_STEP1(rawUrl, context, scrapeContext));
+      const d1 = await callSEO(PROMPT_STEP1(rawUrl, context, scrapeContext), 8000);
       patchStep(1, { status: "done", text: d1.text, canRetry: false });
     } catch (e) {
       patchStep(1, { status: "error", error: e.message, canRetry: true });

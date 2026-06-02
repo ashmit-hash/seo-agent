@@ -775,7 +775,15 @@ async function callGeminiForJSON(prompt, apiKey) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 2048, temperature: 0.95 },
+          generationConfig: {
+            maxOutputTokens: 2048,
+            temperature: 0.95,
+            // Force pure JSON output — no markdown fences, no preamble text
+            responseMimeType: "application/json",
+          },
+          // Disable thinking for JSON calls — thinking tokens pollute the output
+          // and are wasted on structured data generation
+          thinkingConfig: { thinkingBudget: 0 },
           safetySettings: [
             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
             { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
@@ -1159,14 +1167,23 @@ export async function POST(req) {
     // ── Parse JSON ───────────────────────────────────────────────
     let recommendation;
     try {
-      // responseMimeType: application/json should give clean JSON, but strip fences just in case
-      const jsonStr = rawText.replace(/^```json\s*/i, "").replace(/```\s*$/i, "").trim();
+      // Strip any thinking blocks, markdown fences, or preamble text
+      let jsonStr = rawText
+        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "") // remove thinking blocks
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```\s*$/i, "")
+        .trim();
       recommendation = JSON.parse(jsonStr);
     } catch (parseErr) {
-      // Try to extract JSON object if there's surrounding text
+      // Last resort: extract the first { ... } block from the raw text
       const match = rawText.match(/\{[\s\S]*\}/);
       if (!match) throw new Error("Gemini response was not valid JSON. Please try again.");
-      recommendation = JSON.parse(match[0]);
+      try {
+        recommendation = JSON.parse(match[0]);
+      } catch {
+        throw new Error("Gemini response was not valid JSON. Please try again.");
+      }
     }
 
     return Response.json(
