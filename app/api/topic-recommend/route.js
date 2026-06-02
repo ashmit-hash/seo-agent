@@ -760,7 +760,8 @@ async function detectLastBlog(siteUrl) {
 async function callGeminiForJSON(prompt, apiKey) {
   // Use stable models only — preview models get deprecated without notice
   const modelsToTry = [
-    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite-preview-06-17",
     "gemini-1.5-flash",
     "gemini-1.5-pro",
   ];
