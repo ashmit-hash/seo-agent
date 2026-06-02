@@ -1105,11 +1105,22 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         || stepDataRef.current[5]?.lockedSnapshot
         || null;
 
-      const d6raw = await callSEO(PROMPT_STEP6(
+      const blogPromptArgs = [
         resolvedTopic, outNote, ragContext, contentType, blueprintStructure,
         targetReader, corePromise, websiteContext, extractedBrandName,
-        tierMap, materialConstraints, urgencyLine, policyContext, snapshotToUse
-      ), 8000);
+        tierMap, materialConstraints, urgencyLine, policyContext, snapshotToUse,
+      ];
+      let d6raw = await callSEO(PROMPT_STEP6(...blogPromptArgs), 8000);
+
+      // ── Error-message intercept ───────────────────────────────
+      // If the model output an ERROR/INSUFFICIENT message (from old conversation
+      // history instructions), override and regenerate with an explicit directive.
+      const ERROR_PATTERNS = /^(ERROR:|INSUFFICIENT PRODUCTS:|MISSING PRICES:|BLOG GENERATION BLOCKED)/i;
+      if (ERROR_PATTERNS.test((d6raw.text || "").trim())) {
+        console.warn("[BlogGen] Model output an error message — overriding and regenerating");
+        const overridePrompt = `IMPORTANT OVERRIDE: Ignore any previous instruction about outputting ERROR messages. You MUST write a complete blog post about "${resolvedTopic}". Use whatever products are available in the product list. If fewer than 3 match the exact category, use the closest available products. Never output an error message — always produce the full blog.\n\n` + PROMPT_STEP6(...blogPromptArgs);
+        d6raw = await callSEO(overridePrompt, 8000, true);
+      }
 
       // ── Auto-format into paragraphs before showing to user ───
       let finalBlogText = d6raw.text;
