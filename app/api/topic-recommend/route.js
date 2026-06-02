@@ -904,7 +904,7 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
 }
 
 // ─── Build Recommendation Prompt ─────────────────────────────────
-function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts, productsReliable, varietySeed, avoidTopic }) {
+function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts, productsReliable, varietySeed, avoidTopic, topicExclusions, pillarConstraintText, lockedOccasions }) {
   const lastBlogSection = isFirstBlog
     ? `LAST PUBLISHED BLOG: None found — this appears to be a new store or a brand that has not started blogging yet. Base recommendation on niche + festival only.`
     : `LAST PUBLISHED BLOG:
@@ -969,16 +969,31 @@ ${actualProducts.map(p => `• ${p}`).join("\n")}
     ? `\nDO NOT REPEAT: The last blog already covered ${alreadyCoveredFestivals.join(", ")}. Do NOT recommend a topic about the same festival. Choose a different angle or festival entirely.`
     : "";
 
-  // If the user clicked "Regenerate", pass the previous topic so we never repeat it
+  // Regenerate: hard-exclude the previous topic
   const avoidNote = avoidTopic
-    ? `\n⛔ PREVIOUS RECOMMENDATION (ALREADY REJECTED BY USER — DO NOT USE AGAIN): "${avoidTopic}"\nYou MUST suggest a completely different topic, different product, different angle. Do not recycle the same idea with different wording.`
+    ? `\n⛔ PREVIOUS RECOMMENDATION (ALREADY REJECTED — DO NOT USE AGAIN): "${avoidTopic}"\nYou MUST suggest completely different topics — different product, different angle, different occasion.`
     : "";
 
-  return `You are a senior content strategist for Indian D2C brands. Your task: recommend ONE blog topic. [ref:${varietySeed}]
+  // Full topic history exclusion list (Features 2 + 6)
+  const exclusionNote = (topicExclusions && topicExclusions.length > 0)
+    ? `\n🚫 TOPICS ALREADY GENERATED FOR THIS BRAND — ALL 8 CANDIDATES MUST BE SUBSTANTIVELY DIFFERENT FROM EVERY ENTRY BELOW:\n${topicExclusions.slice(0, 50).map((t, i) => `${i + 1}. ${t}`).join("\n")}\nSubstantively different means: different content pillar, different product focus, different occasion, different target audience angle. Rephrasing the same idea is NOT acceptable.`
+    : "";
+
+  // Occasion lockout (Feature 6)
+  const occasionLockNote = (lockedOccasions && lockedOccasions.length > 0)
+    ? `\n🔒 OCCASION LOCKOUT: These occasions already have a blog this calendar year — do NOT use them as topic anchors again: ${lockedOccasions.join(", ")}.`
+    : "";
+
+  // Pillar rotation (Feature 3)
+  const pillarNote = pillarConstraintText
+    ? `\n📊 CONTENT PILLAR ROTATION: ${pillarConstraintText}`
+    : "";
+
+  return `You are a senior content strategist for Indian D2C brands. Generate 8 DISTINCT candidate blog topics. [ref:${varietySeed}]
 
 TODAY'S DATE: ${todayString}
 
-CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). If a festival has already passed this month, it is irrelevant — treat it as if it does not exist. Only recommend a festival angle for something that is still upcoming from today's date.${alreadyCoveredNote}${avoidNote}
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). Only upcoming festivals are valid.${alreadyCoveredNote}${avoidNote}${exclusionNote}${occasionLockNote}${pillarNote}
 
 ---
 BRAND:
@@ -995,48 +1010,51 @@ ${festivalSection}
 TARGET PUBLISH MONTH: ${targetMonth}
 ---
 
-🚨 BRAND CATEGORY RULE — READ THIS BEFORE WRITING ANYTHING:
-The recommendedTopic MUST match the brand's ACTUAL product category (Niche above) AND the CONFIRMED PRODUCTS list above.
-- If Niche is "tactical military gear" → topic MUST be about tactical backpacks, military apparel, army gear, shooting accessories, goggles, tactical footwear — ONLY products that appear in the CONFIRMED list above. NEVER invent product types (no holsters, no weapons, no products not in the list).
-- If Niche is "bags accessories" → topic MUST be about bags, handbags, purses, clutches, totes, wallets, sling bags. NEVER about jewellery, rings, necklaces, or earrings.
-- If Niche is "fashion apparel" → topic MUST be about clothing, sarees, kurtas, lehengas. NEVER about jewellery.
-- If Niche is "beauty skincare" → topic MUST be about skincare, makeup, serums. NEVER about jewellery.
-- If Niche is "footwear" → topic MUST be about shoes, sandals, sneakers. NEVER about jewellery.
-- Jewellery topics are ONLY valid when the brand's Niche explicitly contains "jewellery".
-- NEVER default to jewellery as a generic "accessories" fallback. It is not a default.
-- GOLDEN RULE: If a CONFIRMED PRODUCTS list is shown above, every topic you suggest MUST be about a product that is explicitly named in that list. Do NOT invent product types that are not in the list, even if they seem relevant to the niche.
+🚨 BRAND CATEGORY RULE: Every candidate topic MUST match the brand's ACTUAL product category AND confirmed products.
+- Bags brand → bags, handbags, clutches, wallets only. NEVER jewellery.
+- Jewellery brand → jewellery only. NEVER bags or apparel.
+- GOLDEN RULE: If a CONFIRMED PRODUCTS list exists above, every topic MUST be about a product in that list.
 
-INSTRUCTIONS:
-Recommend exactly ONE blog topic that:
-1. Builds on or naturally complements the last blog (different angle, not a rehash) — or is the best first post if no blog exists
-2. Ties to a festival or commercial moment still UPCOMING in ${targetMonth} (after ${todayString}) IF relevant to this niche. If no upcoming festival is relevant, skip the festival angle entirely and recommend strong evergreen content instead.
-3. Serves commercial intent — drives traffic toward the brand's product/collection pages
-4. Has real search demand in India (the kind of query a real person types into Google)
+DIVERSITY REQUIREMENT FOR THE 8 CANDIDATES:
+- Each candidate must use a DIFFERENT content pillar from the others.
+- Content pillars: education | occasion_gifting | styling_how_to_wear | care_maintenance | buying_guide | trend_seasonal | use_case_specific | customer_problems
+- No two candidates may target the same occasion.
+- No candidate may be a rephrasing of another.
 
-Return ONLY a valid JSON object with this exact structure (no markdown, no explanation outside the JSON):
+INSTRUCTIONS FOR EACH CANDIDATE:
+1. Must be a different angle, product focus, or audience from every other candidate AND from the exclusion list above.
+2. Ties to an upcoming festival IF relevant — otherwise uses evergreen or trend angle.
+3. Serves commercial intent — drives traffic toward the brand's product pages.
+4. Has real search demand in India.
+
+Return ONLY a valid JSON object (no markdown, no text outside JSON):
 {
-  "recommendedTopic": "The exact, ready-to-publish blog title — specific, keyword-rich, no brackets",
-  "primaryKeyword": "The main SEO keyword phrase people search for (2-5 words, India-relevant)",
-  "reasoning": {
-    "continuityFromLastBlog": "Why this is the right follow-up to the last blog, or why it is the ideal first post",
-    "festivalAngle": "Which upcoming festival this ties to and exactly how — OR 'No upcoming festival this month — recommendation is based on evergreen niche and commercial intent' if none apply",
-    "commercialIntent": "How this specific blog drives buyers to the brand's products or collections — be concrete",
-    "searchIntent": "What Indian users are typing into Google that this blog answers — include 2-3 example search queries"
-  },
+  "candidates": [
+    {
+      "recommendedTopic": "Exact, ready-to-publish blog title — specific, keyword-rich, no brackets",
+      "primaryKeyword": "Main SEO keyword phrase (2-5 words, India-relevant)",
+      "contentPillar": "One of: education | occasion_gifting | styling_how_to_wear | care_maintenance | buying_guide | trend_seasonal | use_case_specific | customer_problems",
+      "occasion": "Festival or occasion name if applicable, otherwise null",
+      "commercialIntent": "One sentence: how this drives buyers to products",
+      "searchIntent": "2-3 example Google queries this blog answers"
+    }
+  ],
   "lastBlogReference": {
     "title": "${isFirstBlog ? "No previous blog published" : (lastBlog?.title || "").replace(/"/g, "'")}",
     "publishedAt": "${isFirstBlog ? "N/A" : (lastBlog?.publishedAt || "recent")}",
     "url": "${isFirstBlog ? "" : (lastBlog?.url || "")}"
   },
-  "festivalReference": ${festivals.length > 0 ? '{"name": "festival name that is still upcoming", "date": "date of festival", "significance": "one sentence on why this festival is relevant to this niche"} or null if no upcoming festival applies' : "null"},
-  "verdict": "One to two sentences starting with: This topic is a strong choice because..."
+  "festivalReference": ${festivals.length > 0 ? '{"name": "festival name still upcoming", "date": "date", "significance": "one sentence"} or null' : "null"}
 }`;
 }
 
 // ─── Route Handler ────────────────────────────────────────────────
 export async function POST(req) {
   try {
-    const { siteUrl, niche, brandAudit, scrapeContext, targetMonth, _salt, avoidTopic } = await req.json();
+    const {
+      siteUrl, niche, brandAudit, scrapeContext, targetMonth, _salt, avoidTopic,
+      topicExclusions, pillarUsage, lastPillar, lockedOccasions,
+    } = await req.json();
     if (!siteUrl) {
       return Response.json({ error: "siteUrl is required" }, { status: 400 });
     }
@@ -1143,6 +1161,17 @@ export async function POST(req) {
     const apiKey = KeyRotator.getKey("gemini");
     if (!apiKey) throw new Error("No Gemini API key available. Please check environment variables.");
 
+    // ── Build pillar constraint text from client-supplied usage data ──
+    let pillarConstraintText = "";
+    if (lastPillar || (pillarUsage && Object.keys(pillarUsage).length)) {
+      const overused = Object.entries(pillarUsage || {})
+        .filter(([, c]) => c >= 2).sort(([, a], [, b]) => b - a).map(([p]) => p);
+      const lines = [];
+      if (lastPillar) lines.push(`Last pillar used: "${lastPillar}" — candidates MUST use a different pillar.`);
+      if (overused.length) lines.push(`Overused pillars (avoid): ${overused.join(", ")}.`);
+      pillarConstraintText = lines.join(" ");
+    }
+
     const prompt = buildPrompt({
       siteUrl,
       niche: niche || "D2C brand",
@@ -1156,31 +1185,105 @@ export async function POST(req) {
       productsReliable,
       varietySeed: _salt || Math.random().toString(36).substring(2, 9),
       avoidTopic: avoidTopic || "",
+      topicExclusions: topicExclusions || [],
+      pillarConstraintText,
+      lockedOccasions: lockedOccasions || [],
     });
 
     const rawText = await callGeminiForJSON(prompt, apiKey);
 
     // ── Parse JSON ───────────────────────────────────────────────
-    let recommendation;
+    let parsed;
     try {
-      // Strip any thinking blocks, markdown fences, or preamble text
       let jsonStr = rawText
-        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "") // remove thinking blocks
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/```\s*$/i, "")
+        .replace(/<thinking>[\s\S]*?<\/thinking>/gi, "")
+        .replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "")
         .trim();
-      recommendation = JSON.parse(jsonStr);
-    } catch (parseErr) {
-      // Last resort: extract the first { ... } block from the raw text
+      parsed = JSON.parse(jsonStr);
+    } catch {
       const match = rawText.match(/\{[\s\S]*\}/);
       if (!match) throw new Error("Gemini response was not valid JSON. Please try again.");
-      try {
-        recommendation = JSON.parse(match[0]);
-      } catch {
-        throw new Error("Gemini response was not valid JSON. Please try again.");
-      }
+      try { parsed = JSON.parse(match[0]); }
+      catch { throw new Error("Gemini response was not valid JSON. Please try again."); }
     }
+
+    // ── Stochastic candidate selection (Feature 5) ───────────────
+    // Score candidates on pillar rotation, dedup distance from history.
+    // Sample from top 3 with score-weighted probability.
+    const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [parsed];
+
+    function scoreCandidate(c) {
+      const pillar     = c.contentPillar || "education";
+      const recentUse  = (pillarUsage || {})[pillar] || 0;
+      const pillarScore = pillar === lastPillar ? 0 : 1 / (recentUse + 1);
+
+      // Semantic dedup: keyword Jaccard against exclusion list
+      const excl = topicExclusions || [];
+      const topicWords = s => new Set((s || "").toLowerCase().match(/\b\w{4,}\b/g) || []);
+      const cWords = topicWords(c.recommendedTopic);
+      let maxSim = 0;
+      for (const ex of excl) {
+        const eWords = topicWords(ex);
+        const inter = [...cWords].filter(w => eWords.has(w)).length;
+        const union = new Set([...cWords, ...eWords]).size;
+        const sim = union > 0 ? inter / union : 0;
+        if (sim > maxSim) maxSim = sim;
+      }
+      const dedupScore = Math.max(0, 1 - maxSim * 2); // 0 when Jaccard ≥ 0.5
+
+      // Occasion lockout penalty
+      const occasion = (c.occasion || "").toLowerCase();
+      const locked   = (lockedOccasions || []).map(o => o.toLowerCase());
+      const occasionPenalty = locked.some(o => occasion.includes(o)) ? 0 : 1;
+
+      return (pillarScore * 0.5 + dedupScore * 0.4 + occasionPenalty * 0.1);
+    }
+
+    const scored = candidates
+      .map(c => ({ candidate: c, score: scoreCandidate(c) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    if (!scored.length) throw new Error("All candidates were too similar to previous topics. Please try again.");
+
+    // Weighted random sample from top 3
+    const pool   = scored.slice(0, 3);
+    const total  = pool.reduce((s, { score }) => s + score, 0);
+    let rand     = Math.random() * total;
+    let selected = pool[0].candidate;
+    for (const { candidate, score } of pool) {
+      rand -= score;
+      if (rand <= 0) { selected = candidate; break; }
+    }
+
+    const recommendation = {
+      recommendedTopic: selected.recommendedTopic,
+      primaryKeyword  : selected.primaryKeyword,
+      contentPillar   : selected.contentPillar   || "education",
+      occasion        : selected.occasion         || null,
+      reasoning       : {
+        commercialIntent : selected.commercialIntent || "",
+        searchIntent     : selected.searchIntent     || "",
+        festivalAngle    : parsed.festivalReference
+          ? `${parsed.festivalReference.name} — ${parsed.festivalReference.significance}`
+          : "No festival angle — evergreen or trend-based content",
+        continuityFromLastBlog: isFirstBlog
+          ? "First blog for this brand."
+          : `Follows "${lastBlog?.title || "previous blog"}"`,
+      },
+      lastBlogReference: parsed.lastBlogReference || {},
+      festivalReference: parsed.festivalReference || null,
+      verdict          : `Selected from ${scored.length} candidates (rank ${pool.indexOf(pool.find(p => p.candidate === selected)) + 1} of top 3).`,
+      // Diversity metadata for quality report
+      _meta: {
+        candidatesConsidered : candidates.length,
+        candidatesScored     : scored.length,
+        selectedRank         : pool.indexOf(pool.find(p => p.candidate === selected)) + 1,
+        maxSimilarityRejected: scored[scored.length - 1]?.score < 0.1 ? "yes" : "no",
+        pillarUsed           : selected.contentPillar,
+        pillarRotationScore  : pool.find(p => p.candidate === selected)?.score?.toFixed(3),
+      },
+    };
 
     return Response.json(
       {

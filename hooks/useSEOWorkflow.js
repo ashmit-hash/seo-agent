@@ -13,6 +13,11 @@ import {
 } from "@/lib/constants";
 import { scanVocab, buildVocabFixPrompt } from "@/lib/vocabularyCaps";
 import { detectMaterials, buildMaterialConstraints, scanMaterialViolations } from "@/lib/materialsKnowledge";
+import {
+  getExclusionList, getPillarUsage, getLastPillar, getLockedOccasions,
+  addToTopicHistory, isSemanticallyDuplicate,
+} from "@/lib/topicHistory";
+import { detectPillar } from "@/lib/contentPillars";
 
 // ─── Step Reducer ─────────────────────────────────────────────────
 function stepReducer(state, action) {
@@ -1052,6 +1057,12 @@ function extractNicheFromAudit(auditText, scrapeContext) {
 
       stepInputsRef.current[2] = { niche, targetMonth: resolvedMonth };
 
+      // ── Load per-brand topic history for dedup ─────────────────
+      const topicExclusions = getExclusionList(siteUrl);
+      const pillarUsage     = getPillarUsage(siteUrl, 30);
+      const lastPillar      = getLastPillar(siteUrl);
+      const lockedOccasions = getLockedOccasions(siteUrl);
+
       const res = await fetch("/api/topic-recommend", {
         method : "POST",
         cache  : "no-store",
@@ -1059,24 +1070,40 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         body   : JSON.stringify({
           siteUrl,
           niche,
-          brandAudit  : auditText.slice(0, 1200),
-          scrapeContext: scrapeCtx.slice(0, 1500),
-          targetMonth : resolvedMonth,
-          _salt       : Math.random().toString(36).substring(2, 9),
-          // Tell the API which topic was previously shown — forces a fresh suggestion
-          avoidTopic  : previousTopic || "",
+          brandAudit    : auditText.slice(0, 1200),
+          scrapeContext : scrapeCtx.slice(0, 1500),
+          targetMonth   : resolvedMonth,
+          _salt         : Math.random().toString(36).substring(2, 9),
+          avoidTopic    : previousTopic || "",
+          // Diversity inputs
+          topicExclusions,
+          pillarUsage,
+          lastPillar,
+          lockedOccasions,
         }),
       }).then(r => r.json());
 
       if (res.error) throw new Error(res.error);
 
-      stepInputsRef.current[2].primaryKeyword = res.recommendation?.primaryKeyword ?? "";
-      stepInputsRef.current[2].recommendedTopic = res.recommendation?.recommendedTopic ?? "";
+      const rec = res.recommendation ?? {};
+      stepInputsRef.current[2].primaryKeyword   = rec.primaryKeyword    ?? "";
+      stepInputsRef.current[2].recommendedTopic = rec.recommendedTopic  ?? "";
+
+      // ── Write to topic history immediately (before blog generation) ──
+      // Doing this here ensures back-to-back regenerates see this topic as taken.
+      if (rec.recommendedTopic) {
+        addToTopicHistory(siteUrl, {
+          h1            : rec.recommendedTopic,
+          primaryKeyword: rec.primaryKeyword  || "",
+          contentPillar : rec.contentPillar   || detectPillar(rec.recommendedTopic),
+          occasion      : rec.occasion        || null,
+        });
+      }
 
       patchStep(2, {
         status         : "waiting",
         text           : null,
-        recommendation : res.recommendation,
+        recommendation : rec,
         lastBlog       : res.lastBlog,
         festival       : res.festival,
         isFirstBlog    : res.isFirstBlog,
