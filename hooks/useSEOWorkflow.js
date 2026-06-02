@@ -1073,7 +1073,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         : "";
 
       const categoryFilterNote = detectedCategory
-        ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". ONLY use products whose names contain at least one of these keywords: [${detectedCategory.keywords.join(" | ")}]. Any product whose name does NOT contain one of these keywords → REJECT it, do not include it in the blog.\nIf fewer than 3 valid products remain after filtering → stop and output: "ERROR: No [topic category] products found. Please supply ${detectedCategory.keywords[0]} product names and prices manually."`
+        ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". Prefer products whose names contain: [${detectedCategory.keywords.join(" | ")}]. If fewer than 3 matching products exist, use the closest available products from the same category. Never output an error message — always write a complete blog with whatever products are available.`
         : "";
 
       // ── Brand name label ──────────────────────────────────────
