@@ -18,6 +18,10 @@ import {
   addToTopicHistory, isSemanticallyDuplicate,
 } from "@/lib/topicHistory";
 import { detectPillar } from "@/lib/contentPillars";
+import {
+  classifyProducts, filterProductsByTopicType, detectTopicProductType,
+  validateBodyProductAlignment,
+} from "@/lib/productTaxonomy";
 
 // ─── Step Reducer ─────────────────────────────────────────────────
 function stepReducer(state, action) {
@@ -819,7 +823,63 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         if (policyTexts.length) policyContext = policyTexts.join("\n\n");
       } catch (_) { /* policy scraping is best-effort */ }
 
+      // ── Product type classification + topic-aligned filtering ────
+      // Classify every scraped product into its normalised type (hoops, studs, etc.)
+      // then hard-filter to only products matching the blog topic.
+      // This is the fix for: "hoops topic → stud/drop products recommended"
+      const niche = extractNicheFromAudit(auditText, scrapeCtx);
+      let filteredProductContext = productContext;
+      let topicProductType = null;
+      let productTypeFilterApplied = false;
+      let topicCategoryAvailable = true;
+
+      try {
+        if (productContext) {
+          // Parse product names from the formatted product context string
+          const rawProdLines = productContext.match(/^• (.+?) — ₹/gm) || [];
+          const rawProds = rawProdLines.map(line => ({
+            name: line.replace(/^• /, "").replace(/ — ₹.*$/, "").trim(),
+          }));
+
+          if (rawProds.length > 0) {
+            const classified = classifyProducts(rawProds, niche);
+            topicProductType = detectTopicProductType(resolvedTopic, niche);
+
+            if (topicProductType) {
+              const { products: filtered, sufficient } = filterProductsByTopicType(
+                classified, topicProductType, 3
+              );
+              topicCategoryAvailable = sufficient;
+
+              if (sufficient && filtered.length > 0) {
+                // Rebuild product context with only matching products
+                const matchingNames = new Set(filtered.map(p => p.name));
+                const filteredLines = productContext
+                  .split("\n")
+                  .filter(line => {
+                    if (!line.startsWith("• ")) return true; // keep headers
+                    const name = line.replace(/^• /, "").replace(/ — ₹.*$/, "").trim();
+                    return matchingNames.has(name);
+                  })
+                  .join("\n");
+                filteredProductContext = filteredLines;
+                productTypeFilterApplied = true;
+                console.log(`[TopicFilter] ${niche} topic "${resolvedTopic}" → type: ${topicProductType.type}. Filtered ${rawProds.length} → ${filtered.length} products.`);
+              } else if (!sufficient) {
+                console.warn(`[TopicFilter] Insufficient products for type "${topicProductType?.type}" — ${filtered.length} found, 3 required.`);
+              }
+            }
+          }
+        }
+      } catch (filterErr) {
+        console.log("[TopicFilter] Classification skipped:", filterErr.message);
+      }
+
       // ── Category filter annotation ────────────────────────────
+      const topicCategoryConstraint = topicProductType
+        ? `\nTOPIC CATEGORY CONSTRAINT: This blog is specifically about "${topicProductType.type.replace(/_/g, " ")}" (category: ${topicProductType.category}). Every product you recommend MUST be of this exact type. If a product name does not match — REJECT it. Do NOT recommend ${topicProductType.category === "earrings" ? "studs, drops, teardrops, jhumkas, or any other earring type" : "adjacent product types"} when the topic is specifically about ${topicProductType.type.replace(/_/g, " ")}.`
+        : "";
+
       const categoryFilterNote = detectedCategory
         ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". ONLY use products whose names contain at least one of these keywords: [${detectedCategory.keywords.join(" | ")}]. Any product whose name does NOT contain one of these keywords → REJECT it, do not include it in the blog.\nIf fewer than 3 valid products remain after filtering → stop and output: "ERROR: No [topic category] products found. Please supply ${detectedCategory.keywords[0]} product names and prices manually."`
         : "";
@@ -832,15 +892,20 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       const websiteContext = [
         brandNameLine,
         priceRangeLine,
+        topicCategoryConstraint,
         categoryFilterNote,
         scrapeCtx ? scrapeCtx.slice(0, 500) : "",
         auditText ? auditText.slice(0, 300) : "",
-        productContext ? productContext.slice(0, 2500) : "",
+        filteredProductContext
+          ? filteredProductContext.slice(0, 2500)
+          : (productContext ? productContext.slice(0, 2500) : ""),
       ].filter(Boolean).join("\n\n").trim();
       stepInputsRef.current[5].websiteContext = websiteContext;
-      stepInputsRef.current[5].productContext = productContext;
+      stepInputsRef.current[5].productContext = filteredProductContext || productContext;
       stepInputsRef.current[5].detectedMaterials = detectedMaterials;
       stepInputsRef.current[5].urgencyLine = urgencyLine;
+      stepInputsRef.current[5].topicProductType = topicProductType;
+      stepInputsRef.current[5].topicCategoryAvailable = topicCategoryAvailable;
 
       const d6raw = await callSEO(PROMPT_STEP6(
         resolvedTopic, outNote, ragContext, contentType, blueprintStructure,
@@ -932,20 +997,51 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         console.log("[Tighten] Pass skipped:", tightErr.message);
       }
 
+      // ── Body-product cross-validator (Feature 5) ─────────────
+      // Scan body text for category claims and verify they match
+      // the products that were actually recommended.
+      let bodyProductAlignment = { passed: true, mismatches: [], matchRatio: 1 };
+      try {
+        const inp5 = stepInputsRef.current[5];
+        if (inp5?.topicProductType) {
+          // Parse products from the filtered product context
+          const prodLines = (inp5.productContext || "").match(/^• (.+?) — ₹/gm) || [];
+          const recommendedProds = prodLines.map(line => {
+            const name = line.replace(/^• /, "").replace(/ — ₹.*$/, "").trim();
+            const classified = classifyProducts([{ name }], niche)[0];
+            return classified;
+          });
+          bodyProductAlignment = validateBodyProductAlignment(
+            finalBlogText, recommendedProds, inp5.topicProductType
+          );
+          if (!bodyProductAlignment.passed) {
+            console.warn("[BodyProductValidator] Mismatches found:", bodyProductAlignment.mismatches);
+          }
+        }
+      } catch (_) { /* non-blocking */ }
+
       // ── Quality report (Feature 10) ──────────────────────────
       const wordCountFinal = finalBlogText.split(/\s+/).filter(Boolean).length;
       const { violations: finalVocabCheck, wordCounts } = scanVocab(finalBlogText);
+      const inp5 = stepInputsRef.current[5];
       const qualityReport = {
         wordCountBefore,
         wordCountFinal,
         reductionRatio: ((wordCountBefore - wordCountFinal) / wordCountBefore).toFixed(2),
         vocabViolationsRemaining: finalVocabCheck.length,
         vocabWordCounts: wordCounts,
-        materialViolations: stepInputsRef.current[5]?.materialViolations || [],
+        materialViolations: inp5?.materialViolations || [],
         urgencyLineInjected: !!urgencyLine,
         tierMapUsed: !!tierMap,
         policyFaqAvailable: !!policyContext,
-        detectedMaterials: stepInputsRef.current[5]?.detectedMaterials || [],
+        detectedMaterials: inp5?.detectedMaterials || [],
+        // Category alignment (Feature 7 quality report extension)
+        topicPrimaryCategory: topicProductType?.type || null,
+        availableProductsInCategory: topicCategoryAvailable ? "sufficient" : "insufficient",
+        productTypeFilterApplied,
+        bodyProductCategoryMismatches: bodyProductAlignment.mismatches,
+        categoryMatchRatio: bodyProductAlignment.matchRatio,
+        categoryAlignmentPassed: bodyProductAlignment.passed,
       };
       stepInputsRef.current[5].qualityReport = qualityReport;
       console.log("[QualityReport]", qualityReport);

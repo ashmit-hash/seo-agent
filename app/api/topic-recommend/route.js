@@ -3,6 +3,9 @@ export const runtime = "nodejs";
 import * as cheerio from "cheerio";
 import { KeyRotator } from "@/lib/keys";
 import { getFestivalsForMonth, getCurrentMonthIST, YEAR_SPECIFIC_FESTIVAL_DATES } from "@/lib/festivalCalendar";
+import {
+  classifyProducts, buildTypeDistribution, buildTypeDistributionPromptLine,
+} from "@/lib/productTaxonomy";
 
 // ─── PayloadCMS config (Alippo's CMS) ────────────────────────────
 // Try multiple possible CMS base URLs
@@ -904,7 +907,7 @@ function isFestivalUpcoming(festivalDate, targetMonthName, todayIST, festivalNam
 }
 
 // ─── Build Recommendation Prompt ─────────────────────────────────
-function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts, productsReliable, varietySeed, avoidTopic, topicExclusions, pillarConstraintText, lockedOccasions }) {
+function buildPrompt({ siteUrl, niche, brandAudit, lastBlog, isFirstBlog, festivals, targetMonth, todayString, actualProducts, productsReliable, varietySeed, avoidTopic, topicExclusions, pillarConstraintText, lockedOccasions, typeDistributionLine }) {
   const lastBlogSection = isFirstBlog
     ? `LAST PUBLISHED BLOG: None found — this appears to be a new store or a brand that has not started blogging yet. Base recommendation on niche + festival only.`
     : `LAST PUBLISHED BLOG:
@@ -989,11 +992,16 @@ ${actualProducts.map(p => `• ${p}`).join("\n")}
     ? `\n📊 CONTENT PILLAR ROTATION: ${pillarConstraintText}`
     : "";
 
+  // Product type distribution (Feature 3 — pre-topic availability check)
+  const typeDistNote = typeDistributionLine
+    ? `\n📦 PRODUCT TYPE AVAILABILITY: ${typeDistributionLine}`
+    : "";
+
   return `You are a senior content strategist for Indian D2C brands. Generate 8 DISTINCT candidate blog topics. [ref:${varietySeed}]
 
 TODAY'S DATE: ${todayString}
 
-CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). Only upcoming festivals are valid.${alreadyCoveredNote}${avoidNote}${exclusionNote}${occasionLockNote}${pillarNote}
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). Only upcoming festivals are valid.${alreadyCoveredNote}${avoidNote}${exclusionNote}${occasionLockNote}${pillarNote}${typeDistNote}
 
 ---
 BRAND:
@@ -1157,6 +1165,23 @@ export async function POST(req) {
       }
     }
 
+    // ── Classify products + build type distribution (Feature 3) ──
+    // Used to inject eligible product types into the brainstorm prompt
+    // so the AI never proposes "hoops guide" for a brand with 0 hoops.
+    let typeDistributionLine = "";
+    try {
+      if (actualProducts.length > 0) {
+        const classifiedProds = classifyProducts(
+          actualProducts.map(p => (typeof p === "string" ? { name: p } : p)),
+          niche || "jewellery"
+        );
+        const typeDist = buildTypeDistribution(classifiedProds);
+        if (Object.keys(typeDist).length > 0) {
+          typeDistributionLine = buildTypeDistributionPromptLine(typeDist, 3);
+        }
+      }
+    } catch (_) { /* non-blocking */ }
+
     // ── Call Gemini for recommendation ───────────────────────────
     const apiKey = KeyRotator.getKey("gemini");
     if (!apiKey) throw new Error("No Gemini API key available. Please check environment variables.");
@@ -1188,6 +1213,7 @@ export async function POST(req) {
       topicExclusions: topicExclusions || [],
       pillarConstraintText,
       lockedOccasions: lockedOccasions || [],
+      typeDistributionLine,
     });
 
     const rawText = await callGeminiForJSON(prompt, apiKey);
