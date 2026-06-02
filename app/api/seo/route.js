@@ -168,8 +168,11 @@ async function callGemini(messages, systemPrompt, maxTokens, model = "gemini-2.5
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemPrompt }] },
         contents,
-        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.7 },
-        thinkingConfig: { thinkingBudget: 0 },
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          temperature: 0.7,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
         safetySettings: [
           { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
           { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },

@@ -777,8 +777,8 @@ async function callGeminiForJSON(prompt, apiKey) {
           generationConfig: {
             maxOutputTokens: 2048,
             temperature: 0.95,
-            // Force pure JSON output — no markdown fences, no preamble text
             responseMimeType: "application/json",
+            thinkingConfig: { thinkingBudget: 0 },
           },
           safetySettings: [
             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
