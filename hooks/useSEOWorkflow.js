@@ -8,8 +8,11 @@ import { QualityAssurance } from "@/lib/qualityAssurance";
 import {
   STEPS, SYSTEM_PROMPT,
   PROMPT_STEP1, PROMPT_STEP3,
-  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP6_FORMAT, PROMPT_STEP6_REVISE, PROMPT_STEP7, PROMPT_STEP8,
+  PROMPT_STEP4, PROMPT_STEP5, PROMPT_STEP6, PROMPT_STEP6_FORMAT,
+  PROMPT_STEP6_REVISE, PROMPT_STEP7, PROMPT_STEP8, PROMPT_TIGHTEN,
 } from "@/lib/constants";
+import { scanVocab, buildVocabFixPrompt } from "@/lib/vocabularyCaps";
+import { detectMaterials, buildMaterialConstraints, scanMaterialViolations } from "@/lib/materialsKnowledge";
 
 // ─── Step Reducer ─────────────────────────────────────────────────
 function stepReducer(state, action) {
@@ -738,10 +741,80 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ? `PRICE RANGE OF THIS BRAND: ₹${minPrice?.toLocaleString("en-IN")} – ₹${maxPrice.toLocaleString("en-IN")} (MAX ₹${maxPrice.toLocaleString("en-IN")}). NEVER write any price above ₹${maxPrice.toLocaleString("en-IN")} in the blog.`
         : "";
 
+      // ── Catalog-driven tier map (Feature 1) ──────────────────
+      // Build price tiers from real SKUs so the AI never creates phantom tier H2s.
+      let tierMap = "";
+      if (allExtractedPrices.length >= 2) {
+        const sorted = [...allExtractedPrices].sort((a, b) => a - b);
+        const lo = sorted[0], hi = sorted[sorted.length - 1];
+        const spread = hi - lo;
+        if (spread < 1000 || sorted.length < 4) {
+          // All products in one tier — no price-tier framing needed
+          tierMap = `Single tier: all products ₹${lo.toLocaleString("en-IN")}–₹${hi.toLocaleString("en-IN")}. Use a single "${extractedBrandName || "Brand"} picks" section. Do NOT create price-tier H2 headings.`;
+        } else {
+          // Split into at most 2 natural tiers based on median
+          const mid = sorted[Math.floor(sorted.length / 2)];
+          const tier1 = sorted.filter(p => p <= mid);
+          const tier2 = sorted.filter(p => p > mid);
+          const lines = [];
+          if (tier1.length >= 2) lines.push(`Tier 1 (₹${tier1[0].toLocaleString("en-IN")}–₹${tier1[tier1.length-1].toLocaleString("en-IN")}): ${tier1.length} products`);
+          if (tier2.length >= 2) lines.push(`Tier 2 (₹${tier2[0].toLocaleString("en-IN")}–₹${tier2[tier2.length-1].toLocaleString("en-IN")}): ${tier2.length} products`);
+          tierMap = lines.length ? lines.join("\n") : "";
+        }
+      }
+
+      // ── Material detection + constraints (Feature 3) ──────────
+      const detectedMaterials = detectMaterials(productContext + " " + scrapeCtx);
+      const materialConstraints = buildMaterialConstraints(detectedMaterials);
+
+      // ── Occasion urgency (Feature 7) ─────────────────────────
+      // Detect if this is a gifting/occasion blog and compute order-by date.
+      let urgencyLine = "";
+      const OCCASION_PATTERNS = [
+        { re: /father'?s\s*day/i,    days: 14 },
+        { re: /mother'?s\s*day/i,    days: 14 },
+        { re: /diwali/i,             days: 10 },
+        { re: /raksha\s*bandhan|rakhi/i, days: 7 },
+        { re: /eid/i,                days: 7  },
+        { re: /christmas/i,          days: 10 },
+        { re: /valentine'?s/i,       days: 7  },
+        { re: /anniversary/i,        days: 5  },
+        { re: /birthday/i,           days: 5  },
+        { re: /navratri/i,           days: 5  },
+        { re: /onam/i,               days: 5  },
+        { re: /pongal/i,             days: 5  },
+      ];
+      for (const { re, days } of OCCASION_PATTERNS) {
+        if (re.test(resolvedTopic)) {
+          const orderBy = new Date();
+          orderBy.setDate(orderBy.getDate() + Math.max(0, days - 3));
+          const orderByStr = orderBy.toLocaleDateString("en-IN", { day: "numeric", month: "long" });
+          urgencyLine = `Order by ${orderByStr} for delivery before the occasion.`;
+          break;
+        }
+      }
+
+      // ── Policy page scraping for brand-specific FAQ (Feature 8) ──
+      let policyContext = "";
+      try {
+        const baseUrl = siteUrl.replace(/\/+$/, "");
+        const policyPaths = ["/shipping-policy", "/refund-policy", "/care-guide",
+                             "/shipping", "/returns", "/faq", "/about-us"];
+        const policyTexts = [];
+        for (const path of policyPaths.slice(0, 4)) { // cap at 4 pages
+          const pRes = await fetch("/api/scrape", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: baseUrl + path }),
+          }).then(r => r.json()).catch(() => null);
+          if (pRes?.mainText && pRes.mainText.length > 80 && !pRes.error) {
+            policyTexts.push(`[${path}]: ${pRes.mainText.slice(0, 400)}`);
+          }
+        }
+        if (policyTexts.length) policyContext = policyTexts.join("\n\n");
+      } catch (_) { /* policy scraping is best-effort */ }
+
       // ── Category filter annotation ────────────────────────────
-      // Tell the blog AI which category keywords to enforce for product validation.
-      // This is the guard that prevents bracelet blogs from using anklet products
-      // even if the raw product list contains both.
       const categoryFilterNote = detectedCategory
         ? `\nCATEGORY FILTER ACTIVE: Blog topic = "${resolvedTopic}". ONLY use products whose names contain at least one of these keywords: [${detectedCategory.keywords.join(" | ")}]. Any product whose name does NOT contain one of these keywords → REJECT it, do not include it in the blog.\nIf fewer than 3 valid products remain after filtering → stop and output: "ERROR: No [topic category] products found. Please supply ${detectedCategory.keywords[0]} product names and prices manually."`
         : "";
@@ -761,8 +834,14 @@ function extractNicheFromAudit(auditText, scrapeContext) {
       ].filter(Boolean).join("\n\n").trim();
       stepInputsRef.current[5].websiteContext = websiteContext;
       stepInputsRef.current[5].productContext = productContext;
+      stepInputsRef.current[5].detectedMaterials = detectedMaterials;
+      stepInputsRef.current[5].urgencyLine = urgencyLine;
 
-      const d6raw = await callSEO(PROMPT_STEP6(resolvedTopic, outNote, ragContext, contentType, blueprintStructure, targetReader, corePromise, websiteContext, extractedBrandName), 8000);
+      const d6raw = await callSEO(PROMPT_STEP6(
+        resolvedTopic, outNote, ragContext, contentType, blueprintStructure,
+        targetReader, corePromise, websiteContext, extractedBrandName,
+        tierMap, materialConstraints, urgencyLine, policyContext
+      ), 8000);
 
       // ── Auto-format into paragraphs before showing to user ───
       let finalBlogText = d6raw.text;
@@ -798,8 +877,73 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         }
       } catch (fmtErr) {
         console.log("[Format] Paragraph formatting skipped:", fmtErr.message);
-        // fallback: use original blog text
       }
+
+      // ── Vocabulary cap fix pass (Feature 4) ──────────────────
+      // Scan for AI-tell vocabulary violations and run a targeted fix if any found.
+      try {
+        const { violations } = scanVocab(finalBlogText);
+        if (violations.length > 0) {
+          console.log(`[VocabCaps] ${violations.length} violation(s):`, violations.map(v => v.phrase));
+          const vocabFixPrompt = buildVocabFixPrompt(finalBlogText, violations);
+          const d6vocabResult = await callSEO(vocabFixPrompt, 8000);
+          if (d6vocabResult?.text && d6vocabResult.text.length > 200) {
+            finalBlogText = d6vocabResult.text;
+            console.log("[VocabCaps] Fix pass completed.");
+          }
+        } else {
+          console.log("[VocabCaps] Clean — no violations.");
+        }
+      } catch (vocabErr) {
+        console.log("[VocabCaps] Fix pass skipped:", vocabErr.message);
+      }
+
+      // ── Material accuracy check ───────────────────────────────
+      try {
+        const matViolations = scanMaterialViolations(finalBlogText, stepInputsRef.current[5]?.detectedMaterials || []);
+        if (matViolations.length > 0) {
+          console.warn("[MaterialCheck] Violations found:", matViolations);
+          // Log to step data for reviewer visibility
+          stepInputsRef.current[5].materialViolations = matViolations;
+        }
+      } catch (_) { /* non-blocking */ }
+
+      // ── Density tighten pass (Feature 9) ─────────────────────
+      // Run after vocab fix — cuts 25–35% padding without losing any facts.
+      const wordCountBefore = finalBlogText.split(/\s+/).filter(Boolean).length;
+      try {
+        if (wordCountBefore > 900) { // only tighten if there's content to trim
+          const d6tight = await callSEO(PROMPT_TIGHTEN(finalBlogText), 8000);
+          if (d6tight?.text && d6tight.text.length > 200) {
+            const wordCountAfter = d6tight.text.split(/\s+/).filter(Boolean).length;
+            const reduction = ((wordCountBefore - wordCountAfter) / wordCountBefore * 100).toFixed(1);
+            console.log(`[Tighten] ${wordCountBefore} → ${wordCountAfter} words (${reduction}% reduction)`);
+            if (wordCountAfter >= 700 && wordCountAfter < wordCountBefore) {
+              finalBlogText = d6tight.text;
+            }
+          }
+        }
+      } catch (tightErr) {
+        console.log("[Tighten] Pass skipped:", tightErr.message);
+      }
+
+      // ── Quality report (Feature 10) ──────────────────────────
+      const wordCountFinal = finalBlogText.split(/\s+/).filter(Boolean).length;
+      const { violations: finalVocabCheck, wordCounts } = scanVocab(finalBlogText);
+      const qualityReport = {
+        wordCountBefore,
+        wordCountFinal,
+        reductionRatio: ((wordCountBefore - wordCountFinal) / wordCountBefore).toFixed(2),
+        vocabViolationsRemaining: finalVocabCheck.length,
+        vocabWordCounts: wordCounts,
+        materialViolations: stepInputsRef.current[5]?.materialViolations || [],
+        urgencyLineInjected: !!urgencyLine,
+        tierMapUsed: !!tierMap,
+        policyFaqAvailable: !!policyContext,
+        detectedMaterials: stepInputsRef.current[5]?.detectedMaterials || [],
+      };
+      stepInputsRef.current[5].qualityReport = qualityReport;
+      console.log("[QualityReport]", qualityReport);
 
       try {
         const quality = QualityAssurance.validateStep(5, finalBlogText);
