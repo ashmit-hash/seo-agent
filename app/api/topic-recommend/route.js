@@ -567,6 +567,11 @@ async function scrapeActualProducts(siteUrl) {
       if (/\b(for kids|for children|for toddlers|for babies|for adults|for families|for everyone)\b/i.test(productName)) continue;
       if (nameWords.length > 8) continue;
       if (/\b(summer snacks|winter snacks|healthy snacks|best snacks|top picks|must have|you need|you should|we recommend)\b/i.test(productName)) continue;
+      // Reject promotional banner / announcement bar text
+      if (productName.includes('|')) continue;
+      if (/free delivery|orders above|get free|use code|off on|discount|cashback|free shipping/i.test(productName)) continue;
+      if (productName.includes('!')) continue;
+      if (/trusted snacks|real ingredients|family.trusted|quality guaranteed/i.test(productName)) continue;
 
       products.push({ name: productName, price });
     }

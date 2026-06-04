@@ -187,14 +187,19 @@ export async function POST(req) {
         if (/^(HOME|SHOP|ABOUT|CONTACT|FILTER|SORT|CATEGOR|MRP|NEW|SALE|ALL|EXPLORE|BESTSELL|FEATURE|LEGAL|PRIVACY|RETURN|BULK)/i.test(productName)) continue;
 
         // ── Reject blog/article titles mis-parsed as products ────
-        // Pattern: starts with a number + superlative/list word (article headline)
         if (/^\d+\s+(best|top|healthy|great|amazing|essential|simple|easy|quick|ways|tips|things|reasons|ideas|types|kinds)/i.test(productName)) continue;
-        // Pattern: contains audience-targeting phrases typical of article titles
         if (/\b(for kids|for children|for toddlers|for babies|for adults|for families|for everyone)\b/i.test(productName)) continue;
-        // Pattern: more than 8 words → likely a sentence/title, not a product name
         if (words.length > 8) continue;
-        // Pattern: contains common blog/article structural words
         if (/\b(summer snacks|winter snacks|healthy snacks|best snacks|top picks|must have|you need|you should|we recommend)\b/i.test(productName)) continue;
+        // ── Reject promotional banner / announcement bar text ────
+        // Pattern: pipe character indicates header/banner text ("Brand | Free Delivery")
+        if (productName.includes('|')) continue;
+        // Pattern: delivery/offer promotional text
+        if (/free delivery|orders above|get free|use code|off on|discount|cashback|free shipping/i.test(productName)) continue;
+        // Pattern: exclamation mark indicates banner/marketing text, not a product name
+        if (productName.includes('!')) continue;
+        // Pattern: contains "trusted" + generic word (announcement bar pattern)
+        if (/trusted snacks|real ingredients|family.trusted|quality guaranteed/i.test(productName)) continue;
 
         if (!seen.has(productName)) {
           seen.add(productName);
