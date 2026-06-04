@@ -34,6 +34,29 @@ export async function POST(req) {
     const html = await response.text();
     const $ = cheerio.load(html);
 
+    // ── Extract announcement bar / promotional claims BEFORE removing elements ──
+    // These contain key selling points (Free Shipping, COD, etc.) that must
+    // appear correctly in the blog FAQ — never contradicted.
+    const announcementSelectors = [
+      '[class*="announcement"]', '[class*="banner"]', '[class*="notice"]',
+      '[class*="promo"]', '[class*="topbar"]', '[class*="top-bar"]',
+      '[id*="announcement"]', '[id*="banner"]', '[id*="promo"]',
+    ];
+    const announcementTexts = [];
+    for (const sel of announcementSelectors) {
+      $(sel).each((_, el) => {
+        const text = $(el).text().replace(/\s+/g, ' ').trim();
+        if (text.length > 5 && text.length < 300) announcementTexts.push(text);
+      });
+    }
+    // Also capture the first <header> text if it contains policy keywords
+    const headerText = $('header').text().replace(/\s+/g, ' ').trim();
+    if (/free\s*(shipping|delivery)|cod|cash\s*on\s*delivery|free\s*return/i.test(headerText)) {
+      const match = headerText.match(/[^.!?]*(?:free\s*(?:shipping|delivery)|cod|cash\s*on\s*delivery|free\s*return)[^.!?]*/gi) || [];
+      announcementTexts.push(...match.map(m => m.trim()));
+    }
+    const policyHighlights = [...new Set(announcementTexts)].join(' | ').slice(0, 300);
+
     // Remove noisy elements to isolate purely semantic content
     $('script[src], style, noscript, svg, iframe, nav, footer, header, aside').remove();
 
@@ -218,6 +241,7 @@ export async function POST(req) {
       mainText,
       robots,
       canonical,
+      policyHighlights, // free shipping / COD / return policy from announcement bars
       products: products.slice(0, 30), // cap at 30
     });
   } catch (err) {

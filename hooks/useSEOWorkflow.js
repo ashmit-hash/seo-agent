@@ -1465,7 +1465,9 @@ function extractNicheFromAudit(auditText, scrapeContext) {
             `Canonical: ${scrapeRes.canonical}`, `Robots: ${scrapeRes.robots}`,
             `H1: ${scrapeRes.h1}`,               `H2s: ${scrapeRes.h2s}`,
             `H3s: ${scrapeRes.h3s}`,             `Core Content Sample: ${scrapeRes.mainText}`,
-          ].join("\n")
+            // Policy highlights from announcement bars — MUST be reflected accurately in FAQ
+            scrapeRes.policyHighlights ? `Policy/Shipping Highlights (from site banner — use in FAQ, never contradict): ${scrapeRes.policyHighlights}` : "",
+          ].filter(Boolean).join("\n")
         : "";
       stepInputsRef.current[1].scrapeContext = scrapeContext;
 
