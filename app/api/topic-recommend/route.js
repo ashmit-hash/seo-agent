@@ -1045,6 +1045,12 @@ INSTRUCTIONS FOR EACH CANDIDATE:
 3. Serves commercial intent — drives traffic toward the brand's product pages.
 4. Has real search demand in India.
 
+THEME-SPECIFICITY RULE (critical for product variant brands):
+If the catalog has products that differ only by theme or character (e.g., Dinosaur Kit, Unicorn Kit, Astronaut Kit, Car Kit):
+- Do NOT propose a blog about just ONE theme (e.g., "Dinosaur Painting Kit") unless there are at least 3 products with that exact theme word in their name.
+- If fewer than 3 products share a specific theme → propose the broader category topic instead (e.g., "Money Bank Painting Kits for Kids" covers all variants).
+- This prevents blogs that recommend Unicorn and Car products in a "Dinosaur" blog — which is a mismatch that damages trust.
+
 Return ONLY a valid JSON object (no markdown, no text outside JSON):
 {
   "candidates": [

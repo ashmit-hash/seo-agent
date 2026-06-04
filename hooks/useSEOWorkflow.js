@@ -1067,9 +1067,34 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         console.log("[TopicFilter] Classification skipped:", filterErr.message);
       }
 
+      // ── Theme-level keyword extraction ────────────────────────
+      // Extracts the specific variant/character from the topic title.
+      // "Dinosaur Money Bank Painting Kits" → theme = "Dinosaur"
+      // This is separate from category (painting kits) — it filters
+      // within a category by the specific variant named in the topic.
+      const GENERIC_PRODUCT_WORDS = new Set([
+        'kit', 'kits', 'set', 'sets', 'pack', 'packs', 'combo', 'collection',
+        'guide', 'best', 'top', 'how', 'for', 'and', 'with', 'the', 'a',
+        'painting', 'drawing', 'craft', 'activity', 'money', 'bank', 'box',
+        'bag', 'jewellery', 'jewelry', 'saree', 'blog', 'tips', 'ideas',
+      ]);
+      const topicTokens = resolvedTopic.toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 3 && !GENERIC_PRODUCT_WORDS.has(w));
+      // The first significant token is likely the theme/variant word
+      const detectedThemeKeyword = topicTokens[0] || null;
+
       // ── Category filter annotation ────────────────────────────
       const topicCategoryConstraint = topicProductType
         ? `\nTOPIC CATEGORY CONSTRAINT: This blog is specifically about "${topicProductType.type.replace(/_/g, " ")}" (category: ${topicProductType.category}). Every product you recommend MUST be of this exact type. If a product name does not match — REJECT it. Do NOT recommend ${topicProductType.category === "earrings" ? "studs, drops, teardrops, jhumkas, or any other earring type" : "adjacent product types"} when the topic is specifically about ${topicProductType.type.replace(/_/g, " ")}.`
+        : "";
+
+      // ── Theme keyword constraint ──────────────────────────────
+      // If the topic has a specific variant/theme (Dinosaur, Unicorn, Chocolate, etc.)
+      // enforce that ONLY products containing that keyword are recommended.
+      const themeConstraint = detectedThemeKeyword
+        ? `\nTHEME FILTER: The blog topic is specifically about "${detectedThemeKeyword}" — NOT the broader product category. ONLY recommend products whose name contains "${detectedThemeKeyword}". Products in the same category but different theme (e.g., Unicorn, Astronaut, Car when topic is Dinosaur) are DIFFERENT products — DO NOT include them. If fewer than 2 products match "${detectedThemeKeyword}", expand the scope to the full category and note that in the introduction.`
         : "";
 
       const categoryFilterNote = detectedCategory
@@ -1085,6 +1110,7 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         brandNameLine,
         priceRangeLine,
         topicCategoryConstraint,
+        themeConstraint,
         categoryFilterNote,
         scrapeCtx ? scrapeCtx.slice(0, 500) : "",
         auditText ? auditText.slice(0, 300) : "",
