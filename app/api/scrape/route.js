@@ -185,6 +185,17 @@ export async function POST(req) {
         const productName = words.slice(-10).join(' ').trim();
         if (productName.length < 5 || productName.length > 120) continue;
         if (/^(HOME|SHOP|ABOUT|CONTACT|FILTER|SORT|CATEGOR|MRP|NEW|SALE|ALL|EXPLORE|BESTSELL|FEATURE|LEGAL|PRIVACY|RETURN|BULK)/i.test(productName)) continue;
+
+        // ── Reject blog/article titles mis-parsed as products ────
+        // Pattern: starts with a number + superlative/list word (article headline)
+        if (/^\d+\s+(best|top|healthy|great|amazing|essential|simple|easy|quick|ways|tips|things|reasons|ideas|types|kinds)/i.test(productName)) continue;
+        // Pattern: contains audience-targeting phrases typical of article titles
+        if (/\b(for kids|for children|for toddlers|for babies|for adults|for families|for everyone)\b/i.test(productName)) continue;
+        // Pattern: more than 8 words → likely a sentence/title, not a product name
+        if (words.length > 8) continue;
+        // Pattern: contains common blog/article structural words
+        if (/\b(summer snacks|winter snacks|healthy snacks|best snacks|top picks|must have|you need|you should|we recommend)\b/i.test(productName)) continue;
+
         if (!seen.has(productName)) {
           seen.add(productName);
           products.push({ name: productName, price });

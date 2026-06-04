@@ -560,8 +560,13 @@ async function scrapeActualProducts(siteUrl) {
       // Reject obvious nav/filler names
       if (/^(HOME|SHOP|ABOUT|CONTACT|FILTERS?|SORT|CATEGORIES|MRP|NEW|SALE|ALL|EXPLORE|BESTSELL|FEATURE|LEGAL|PRIVACY|RETURN|BULK)/i.test(productName)) continue;
       if (productName.length < 5 || productName.length > 120) continue;
-      // Reject names with fewer than 2 meaningful words
       if (nameWords.length < 2) continue;
+
+      // Reject blog/article titles mis-parsed as products
+      if (/^\d+\s+(best|top|healthy|great|amazing|essential|simple|easy|quick|ways|tips|things|reasons|ideas|types|kinds)/i.test(productName)) continue;
+      if (/\b(for kids|for children|for toddlers|for babies|for adults|for families|for everyone)\b/i.test(productName)) continue;
+      if (nameWords.length > 8) continue;
+      if (/\b(summer snacks|winter snacks|healthy snacks|best snacks|top picks|must have|you need|you should|we recommend)\b/i.test(productName)) continue;
 
       products.push({ name: productName, price });
     }
@@ -1142,6 +1147,10 @@ export async function POST(req) {
         const words  = before.replace(/\s+/g, " ").trim().split(/\s+/).filter(w => w.length > 1);
         if (words.length < 2) continue;
         const name = words.slice(-8).join(" ").trim();
+        // Reject blog/article titles mis-parsed as products
+        if (/^\d+\s+(best|top|healthy|great|amazing|essential|simple|easy|quick|ways|tips|things|reasons|ideas)/i.test(name)) continue;
+        if (/\b(for kids|for children|for adults|for families|for everyone)\b/i.test(name)) continue;
+        if (words.length > 8) continue;
         if (name.length > 5 && name.length < 100 && !seen.has(name)) {
           seen.add(name);
           fallbackProds.push(`${name} (₹${price.toLocaleString("en-IN")})`);
