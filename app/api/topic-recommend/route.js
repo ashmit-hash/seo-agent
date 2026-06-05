@@ -1051,6 +1051,24 @@ If the catalog has products that differ only by theme or character (e.g., Dinosa
 - If fewer than 3 products share a specific theme → propose the broader category topic instead (e.g., "Money Bank Painting Kits for Kids" covers all variants).
 - This prevents blogs that recommend Unicorn and Car products in a "Dinosaur" blog — which is a mismatch that damages trust.
 
+COMMERCIAL INTENT RULE (mandatory — reject all of these):
+NEVER propose a topic with DIY/tutorial intent for a brand that sells finished products. These topics attract hobbyists who want to make the product at home, not buy it. They will not convert.
+Reject any topic matching these patterns:
+- "How to make [product] at home" → DIY intent, will not convert
+- "DIY [product]" → same
+- "How to [make/create/prepare/mix] your own [product]" → same
+- "Step-by-step [product] recipe/tutorial" → same
+If the brand sells cold-pressed soaps → do NOT suggest "How to Make Whipped Soap at Home." The search intent is DIY, not purchase.
+Every topic MUST have clear commercial intent: the reader finishes the blog and wants to BUY from this brand.
+
+CATEGORY ALIGNMENT RULE (mandatory — reject mismatches):
+Every topic MUST be about a product category this brand actually sells.
+Check the CONFIRMED PRODUCTS list and brand niche before proposing ANY topic.
+- If brand sells skincare/supplements → NEVER propose outdoor clothing, kitchen tools, or fitness equipment topics
+- If brand sells craft kits → NEVER propose wellness or nutrition topics
+- If the CONFIRMED PRODUCTS list shows only [category A] → every topic must be about [category A]
+Self-check before each candidate: "Does this brand actually sell this product? Would a blog on this topic end with a real, purchasable product from this brand's catalog?" If no → reject the candidate entirely.
+
 Return ONLY a valid JSON object (no markdown, no text outside JSON):
 {
   "candidates": [
