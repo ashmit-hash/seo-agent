@@ -923,12 +923,20 @@ function extractNicheFromAudit(auditText, scrapeContext) {
           const h2s = (scrapeCtx.match(/H2s:\s*(.+)/) || [])[1] ?? "";
           const h3s = (scrapeCtx.match(/H3s:\s*(.+)/) || [])[1] ?? "";
           if (h2s || h3s) {
-            productContext = `PRODUCT CATEGORIES FROM WEBSITE:\n${[h2s, h3s].filter(Boolean).join("\n")}`;
+            productContext = `PRODUCT CATEGORIES FROM WEBSITE (category names only — no confirmed products with prices):\n${[h2s, h3s].filter(Boolean).join("\n")}`;
           }
         }
       } catch (prodErr) {
         console.log("[Products] Fetch skipped:", prodErr.message);
       }
+
+      // ── Hard gate: track whether real products with prices were found ──
+      // If productContext has no confirmed prices (• Name — ₹Price format),
+      // the AI has no real product list and WILL hallucinate product names.
+      const hasConfirmedProducts = /^• .+ — ₹[\d,]+/m.test(productContext || "");
+      const emptyProductWarning = !hasConfirmedProducts
+        ? `\n⚠️ NO CONFIRMED PRODUCTS WITH PRICES FOUND: The product scraper could not extract real products with prices from this website. This means:\n1. Do NOT write about any specific product by name — you have no confirmed product names.\n2. Do NOT invent product names like "Sandal Bloom Toner" or "Silk Repair Cream" from your training knowledge.\n3. Write a general educational blog without naming specific SKUs in the body.\n4. In the product recommendations section, describe what to LOOK FOR when choosing from this brand's category, rather than naming specific products.\n5. Include a note: "Visit [Brand]'s website to browse current products and pricing."\nThis constraint overrides all other product-related instructions.`
+        : "";
 
       // ── Build price range from ALL sources ────────────────────
       const priceMatches = (scrapeCtx + " " + auditText).match(/₹\s*[\d,]+(?:\s*[-–to]+\s*₹?\s*[\d,]+)?/g) || [];
@@ -1106,12 +1114,28 @@ function extractNicheFromAudit(auditText, scrapeContext) {
         ? `Brand Name: ${extractedBrandName}`
         : "";
 
+      // ── Product URLs for internal linking ────────────────────
+      // Construct best-guess product URLs from product names so the AI
+      // can generate real internal links instead of placeholder text.
+      const productUrlMap = (() => {
+        const lines = (filteredProductContext || productContext || "").match(/^• (.+?) — ₹/gm) || [];
+        const base = siteUrl.replace(/\/+$/, "");
+        const entries = lines.slice(0, 10).map(line => {
+          const name = line.replace(/^• /, "").replace(/ — ₹.*$/, "").trim();
+          const handle = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+          return `${name}: ${base}/products/${handle}`;
+        });
+        return entries.length ? `PRODUCT URLS FOR INTERNAL LINKS:\n${entries.join("\n")}\nUse these URLs when mentioning products. Format: [Product Name](URL)` : "";
+      })();
+
       const websiteContext = [
         brandNameLine,
         priceRangeLine,
+        emptyProductWarning,
         topicCategoryConstraint,
         themeConstraint,
         categoryFilterNote,
+        productUrlMap,
         scrapeCtx ? scrapeCtx.slice(0, 500) : "",
         auditText ? auditText.slice(0, 300) : "",
         filteredProductContext
