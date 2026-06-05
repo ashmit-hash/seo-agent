@@ -1011,7 +1011,11 @@ ${actualProducts.map(p => `• ${p}`).join("\n")}
 
 TODAY'S DATE: ${todayString}
 
-CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). Only upcoming festivals are valid.${alreadyCoveredNote}${avoidNote}${exclusionNote}${occasionLockNote}${pillarNote}${typeDistNote}
+CRITICAL DATE RULE: Do NOT recommend any festival or moment that falls BEFORE today (${todayString}). Only upcoming festivals are valid.
+
+MINIMUM LEAD TIME RULE: Even if a festival is still upcoming, do NOT recommend it if it is less than 10 days away from today (${todayString}). A blog published with fewer than 10 days before a festival has no time to get indexed by Google, read by buyers, and acted upon (gifting requires ordering + delivery time). If Eid, Diwali, Rakhi, or any other festival falls within the next 10 days — DO NOT recommend it as a topic anchor. Use evergreen content instead.
+
+FESTIVAL LOCK CHECK: Before proposing any festival-anchored topic, calculate: is this festival at least 10 days from today (${todayString})? If the answer is NO → do not mention that festival in any candidate topic.${alreadyCoveredNote}${avoidNote}${exclusionNote}${occasionLockNote}${pillarNote}${typeDistNote}
 
 ---
 BRAND:
@@ -1105,12 +1109,29 @@ export async function POST(req) {
     const todayIST    = getTodayIST();
     const todayString = getTodayISTString();
 
-    // Filter out festivals that have already passed this month
+    // Filter out festivals that have already passed OR are within 10 days
+    // A festival < 10 days away gives insufficient time to publish, index, and drive traffic.
+    // For gifting-focused festivals, readers need even more time to order and receive.
+    const MIN_FESTIVAL_LEAD_DAYS = 10;
     const allFestivals = getFestivalsForMonth(resolvedMonth);
     const todayYear    = todayIST.getFullYear();
 
+    // Helper: get days until a festival (using YEAR_SPECIFIC data if available)
+    function getDaysUntilFestival(festivalName) {
+      const yearData = YEAR_SPECIFIC_FESTIVAL_DATES[festivalName]?.[todayYear];
+      if (!yearData) return 999; // unknown → don't filter
+      const MONTH_INDEX = {
+        January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+        July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
+      };
+      const festDate = new Date(todayYear, MONTH_INDEX[yearData.month] ?? 0, yearData.day);
+      const todayDate = new Date(todayYear, todayIST.getMonth(), todayIST.getDate());
+      return Math.round((festDate - todayDate) / (1000 * 60 * 60 * 24));
+    }
+
     const festivals = allFestivals
       .filter(f => isFestivalUpcoming(f.date, resolvedMonth, todayIST, f.name))
+      .filter(f => getDaysUntilFestival(f.name) >= MIN_FESTIVAL_LEAD_DAYS)
       // Enrich generic date strings (e.g. "May (full moon day)") with the actual
       // year-specific date so Gemini and the UI always show the real calendar date.
       .map(f => {
@@ -1276,6 +1297,14 @@ export async function POST(req) {
     // Sample from top 3 with score-weighted probability.
     const candidates = Array.isArray(parsed?.candidates) ? parsed.candidates : [parsed];
 
+    // Build a list of festival names that are too close to recommend (< 10 days away)
+    const TOO_CLOSE_FESTIVALS = Object.entries(YEAR_SPECIFIC_FESTIVAL_DATES)
+      .filter(([name]) => {
+        const days = getDaysUntilFestival(name);
+        return days >= -3 && days < MIN_FESTIVAL_LEAD_DAYS; // within 3 days past to 10 days ahead
+      })
+      .map(([name]) => name.toLowerCase());
+
     function scoreCandidate(c) {
       const pillar     = c.contentPillar || "education";
       const recentUse  = (pillarUsage || {})[pillar] || 0;
@@ -1299,6 +1328,16 @@ export async function POST(req) {
       const occasion = (c.occasion || "").toLowerCase();
       const locked   = (lockedOccasions || []).map(o => o.toLowerCase());
       const occasionPenalty = locked.some(o => occasion.includes(o)) ? 0 : 1;
+
+      // Too-close festival penalty: hard 0 if topic mentions a festival < 10 days away
+      // This catches cases where Gemini proposes a festival topic from training knowledge
+      // even when our calendar has filtered it out.
+      const topicLower = (c.recommendedTopic || "").toLowerCase();
+      const mentionsTooCloseFestival = TOO_CLOSE_FESTIVALS.some(f => {
+        const keywords = f.split(/[\s-]+/).filter(w => w.length > 3);
+        return keywords.some(kw => topicLower.includes(kw));
+      });
+      if (mentionsTooCloseFestival) return 0;
 
       return (pillarScore * 0.5 + dedupScore * 0.4 + occasionPenalty * 0.1);
     }
